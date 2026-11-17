@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.1 — 2026-11-17
+
+安装可用性修复。0.1.0 的安装命令在自带 Node 运行时的绿色发行版上根本跑不起来。
+
+### 修复
+
+- **`dsh` 不在 PATH**：发行版把 CLI 放在 `app/node_modules/@deepseek-ai/dsh/lib/bin.js`，
+  且必须配 `DSH_HOME` 与便携 Node。新增 `install/dsh.cmd` shim，README 补三条可执行路径。
+- **shim 的代理处理**：启动 app 时清掉 `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`，
+  只在 `plugin`（pnpm 走网络）时保留，避免代理残留导致的 `Connection error`。
+
+### 已验证
+
+- 宿主侧在真实 web profile 中挂载成功：`[event-fix] active; projection=step-errors; ledger=...`，
+  `--dump-config` 中可见 `- id: event-fix` 行。
+- 客户端 bundle 由 web 服务拼接进 `plugins/??...` 清单并以 200 返回，语法校验通过。
+- profile 依赖与 bundle 自动登记（`dependencies["dsh-event-fix"]`、`dsh.profile.bundles`）。
+
 ## 0.1.0 — 2026-11-17
 
 首个版本。定位：DSH 会话日志的 step 级无效动作统计，只读、可重放、可追溯。

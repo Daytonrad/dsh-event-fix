@@ -105,11 +105,39 @@ flowchart LR
 
 ## 安装
 
+### 先确认 `dsh` 能跑
+
+DSH 是自带 Node 运行时的绿色发行版，**CLI 没有被装进全局**，所以直接敲 `dsh` 会报
+`The term 'dsh' is not recognized`。三条路，任选一条：
+
+**A. 一次性的完整调用**（不改环境，立刻可用）：
+
+```powershell
+& "E:\program\DeepSeek\runtime\node-v24.19.0-win-x64\node.exe" `
+  "E:\program\DeepSeek\app\node_modules\@deepseek-ai\dsh\lib\bin.js" `
+  plugin --profile web add link:E:/programs/dsh-event-fix
+```
+
+注意：必须用发行版自带的 `node.exe`，并且 `DSH_HOME` 指向 `<发行版>\.dsh`，否则会读到空 profile。
+
+**B. 放一个 shim 到已在 PATH 的目录**（推荐，之后 `dsh` 就一直能用）：
+
+```powershell
+Copy-Item E:\programs\dsh-event-fix\install\dsh.cmd "$env:USERPROFILE\.local\bin\dsh.cmd"
+```
+
+`install/dsh.cmd` 会设好 `DSH_HOME`、把便携 Node 加到 PATH 前面，并在启动 app 时清掉
+代理变量（代理残留会让模型请求变成 `Connection error`），但保留代理供 `pnpm` 装包。
+
+**C. 跑 CLI 命令用绝对路径**，不装插件，只出离线面板（见上文「CLI」）。
+
 ### 本地开发链接（推荐）
 
 ```powershell
 dsh plugin --profile web add link:E:/programs/dsh-event-fix
 ```
+
+装完 `dsh plugin --profile web list --depth 0` 应能看到 `dsh-event-fix@link:...`。
 
 然后确认 profile 的 `package.json` 包含依赖与 bundle：
 
@@ -121,6 +149,20 @@ dsh plugin --profile web add link:E:/programs/dsh-event-fix
 ```
 
 重启 DSH web 进程；日志出现 `[event-fix] active` 即生效。之后发一轮请求，输入框下方会出现胶囊。
+
+**不想重启也能先验证**：`dsh web --help` 会把插件树完整挂载一遍再打印帮助，日志里出现
+`[event-fix] active; projection=step-errors; ledger=...` 就说明宿主侧加载成功（客户端胶囊仍需重启才出现）。
+
+重启方式（DSH 那个控制台窗口里 Ctrl+C 也行）：
+
+```powershell
+# 1. 找出并关掉旧的 web 进程
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*dsh*web*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId }
+# 2. 重新启动
+dsh web --no-open
+```
 
 ### 配置
 
