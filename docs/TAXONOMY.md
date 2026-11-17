@@ -9,16 +9,42 @@
 
 | kind | 触发事件 | 归因位置 |
 |---|---|---|
-| `tool-error` | `tool/result.message.isError === true` | 该 step |
+| `tool-error` | `tool/result` 的 `isError === true`（message 级 **或** part 级） | 该 step |
 | `llm-retry` | 该 step 内出现 `llm/retry` | 该 step |
 | `repeated-call` | `tool/call` 的 `name+arguments` 与更早的调用完全一致，且两次之间没有成功的写入类工具调用 | 后一次调用所在 step |
 | `empty-step` | 该 step 有 `assistant/message`，但既无 `text` 内容也无 `tool-call` | 该 step |
 | `approval-rejected` | `approval/decided.outcome ∈ {rejected, cancelled, denied}` | 该 step |
-| `command-error` | `command/done.kind === 'error'` | 该 step |
+| `command-error` | shell 类工具的 `tool/result` 文本含 `[exit code: 非0]`，或 `command/done.kind === 'error'` | 该 step |
 | `turn-aborted` | `turn/end.reason.kind ∈ {error, aborted, interrupted, max-tokens}` | 该轮最后一步 |
 
 一个 step 可以同时命中多个 kind（例如「审批被拒」通常同时是一条工具报错）。
 `无效步数` 按 step 去重；`无效类型` 计数按 kind 累加，因此两者不必相等。
+`工具报错` KPI 数的是**失败调用次数**，同一 step 内 3 个调用失败记 3；`无效类型` 里的
+`工具报错` 数的是**step 数**，记 1。这是同一批事件的两种单位，不是两个口径。
+
+### 工具结果的两种结构
+
+日志里同时存在两种形状，**只读一种会漏掉一半失败**：
+
+```text
+扁平  { message: { role: 'tool',  isError: true,  content: [{ type: 'text', text }] } }
+嵌套  { message: { role: 'user',  content: [{ type: 'tool-result', isError,
+               toolCallId, content: [{ type: 'text', text }] }] } }
+```
+
+本机语料上：扁平形状只有 538 条（全是失败），嵌套形状 5555 条，其中 418 条的
+`isError` 只出现在 part 上。只读 `message.isError` 会把工具报错从 956 次误报成 538 次。
+嵌套形状的 `source` 只有 `callId` 没有工具名，因此实现里维护 `callId → name` 的映射，
+用更早的 `tool/call` 回填。
+
+### 为什么读取 shell 退出码
+
+DSH 不把「命令非零退出」当 `isError`：`pwsh` 成功执行并返回
+`(no output)\n[exit code: 1]`，`message.isError` 仍是 `false`。只看 `isError`，
+`pwsh` 的失败率是 1.5%；读退出码后是 15.1%（3776 次调用里 571 次）。
+
+代价是 `git diff --quiet`、`Test-Path` 这类以退出码表达布尔结果的命令会被计成失败。
+因此失败摘要优先展示 stderr 的诊断行，而不是 `[exit code: 1]`——看到具体原因就能判断真伪。
 
 `turn-aborted` 是**回填**的：`step/end` 先落盘，`turn/end` 到达时才知道这一轮失败了。
 实现上会对该轮最后一步做一次修正（ledger 里表现为一条 `event: "correction"` 记录），
@@ -58,6 +84,7 @@
 | `tool-usage` | 调用方式错误 | `file has not been read`、`cannot modify`、`invalid argument` |
 | `interrupted` | 执行被中断 | `tool call was interrupted after it was recorded` |
 | `not-found` | 未找到/无匹配 | `no matches found`、`not found` |
+| `exit-code` | 退出码非 0 | `[exit code: 1]`，且没有命中更具体的关键词 |
 | `other` | 其余 | — |
 
 分类表在 `src/taxonomy.js` 的 `ERROR_CLASSES` 中，新增规则只需往对应项追加正则。

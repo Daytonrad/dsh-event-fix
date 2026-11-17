@@ -120,6 +120,7 @@ function summarizeStep(step) {
     invalid: step.invalid,
     kinds: step.kinds,
     toolErrors: step.toolErrors,
+    commandFailures: step.commandFailures ?? 0,
     retries: step.retries,
   }
 }

@@ -74,6 +74,11 @@
     <div class="kpi-note">5 次调用中的失败</div>
   </div>
     <div class="kpi ">
+    <div class="kpi-label">命令失败</div>
+    <div class="kpi-value">0</div>
+    <div class="kpi-note">shell 退出码非 0</div>
+  </div>
+    <div class="kpi ">
     <div class="kpi-label">失败轮次</div>
     <div class="kpi-value">2</div>
     <div class="kpi-note">重试 1 次</div>
@@ -197,7 +202,7 @@
       <td><span class="muted">—</span></td>
       <td class="num">110</td>
       <td class="num">1.0s</td>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
     </tr><tr>
       <td class="mono">2026-11-10</td>
       <td>T2 · S2</td>
@@ -205,7 +210,7 @@
       <td><span class="mono">pwsh</span> <span class="muted">权限 / 沙箱拒绝</span></td>
       <td class="num">110</td>
       <td class="num">0.9s</td>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
     </tr><tr>
       <td class="mono">2026-11-10</td>
       <td>T2 · S1</td>
@@ -213,7 +218,7 @@
       <td><span class="muted">—</span></td>
       <td class="num">110</td>
       <td class="num">1.0s</td>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
     </tr><tr>
       <td class="mono">2026-11-10</td>
       <td>T1 · S4</td>
@@ -221,7 +226,7 @@
       <td><span class="muted">—</span></td>
       <td class="num">110</td>
       <td class="num">1.0s</td>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
     </tr><tr>
       <td class="mono">2026-11-10</td>
       <td>T1 · S3</td>
@@ -229,7 +234,7 @@
       <td><span class="muted">—</span></td>
       <td class="num">110</td>
       <td class="num">1.0s</td>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
     </tr><tr>
       <td class="mono">2026-11-10</td>
       <td>T1 · S2</td>
@@ -237,7 +242,7 @@
       <td><span class="mono">read</span> <span class="muted">路径/文件不存在</span></td>
       <td class="num">110</td>
       <td class="num">1.0s</td>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
     </tr></tbody>
     </table>
   </section>
@@ -248,7 +253,7 @@
     <table>
       <thead><tr><th>工作区 / 会话</th><th class="num">步</th><th class="num">无效</th><th class="num">占比</th><th class="num">浪费 token</th><th class="num">浪费时长</th><th class="num">失败轮次</th></tr></thead>
       <tbody><tr>
-      <td class="path">E:////fixture</td>
+      <td class="path">E:////////fixture</td>
       <td class="num">7</td>
       <td class="num">6</td>
       <td class="num">85.71%</td>
@@ -261,7 +266,8 @@
 
   <footer>
     <p><b>口径</b>：无效步 = 该 step 出现了明确的失败/重复/空转事件
-    （工具 isError、同 step 内 llm/retry、与本会话早前同名同参的重复调用、审批被拒、命令失败、无文本无调用的空步、
+    （工具 isError —— message 级与 part 级两种结果结构都算、shell 结果出现 <span class="mono">[exit code: 非0]</span>、
+    同 step 内 llm/retry、与本会话早前同名同参的重复调用、审批被拒、command/done 失败、无文本无调用的空步、
     非 completed 轮次的最后一步）。</p>
     <p><b>浪费 token</b> = 这些 step 实际发生的 input/output/cache 用量之和，含缓存读取；它衡量「无效动作附带的算力」，
     不是供应商账单。缓存读取单价更低，因此 token 占比通常高于费用占比。</p>

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.1.2 — 2026-11-17
+
+**口径修正：此前的失败数少了一半以上。** 用户反馈「体感远多于面板上的 8 次」，查下来是两个读取缺陷。
+
+### 修复
+
+- **嵌套结果结构未解析**：`tool/result.message.content[0]` 才是 `tool-result` 载体
+  （`{ type:'tool-result', isError, toolCallId, content:[{type:'text',text}] }`），
+  旧代码在 message 级找 `isError`、在 part 级找 `text`，两头落空。
+  本机语料 418 条失败因此完全不可见，且所有 pwsh/edit 成功结果的文本都被读成空串。
+- **工具名丢失**：嵌套结构的 `message.source` 只有 `callId`，旧代码回退到 `unknown`。
+  现在维护 `callId → name` 映射，用更早的 `tool/call` 回填。
+- **shell 退出码未计入**：DSH 不把命令非零退出当 `isError`。新增 `command-error`
+  的退出码分支：shell 类工具结果出现 `[exit code: 非0]` 即计入（540 次）。
+- 失败摘要改为优先取 stderr 的诊断行，而不是 `(no output)` / `[exit code: 1]`。
+- 新增 `exit-code` 报错分类；`totals.commandFailures` 贯通到面板、CLI、报告。
+
+### 数字变化（本机 215 会话 / 8715 步）
+
+| 指标 | 0.1.1 | 0.1.2 |
+|---|---|---|
+| 无效步 | 680（7.8%） | 1403（16.1%） |
+| 工具报错（调用） | 537 | 951 |
+| 命令失败（步） | — | 469 |
+| 浪费 token | 58.64M（5.6%） | 128.90M（12.2%） |
+| pwsh 失败率 | 1.5% | 15.1% |
+| subagent 失败率 | 28.9% | 34.9% |
+
+### 兼容性
+
+`STATE_VERSION` 2 → 3：旧投影状态会被丢弃并从事件重放，无需手工清理。
+
 ## 0.1.1 — 2026-11-17
 
 安装可用性修复。0.1.0 的安装命令在自带 Node 运行时的绿色发行版上根本跑不起来。

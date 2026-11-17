@@ -10,12 +10,12 @@
 
 /** Step-level invalid kinds. */
 export const STEP_KINDS = [
-  { id: 'tool-error', label: '工具报错', hint: '工具返回 isError=true' },
+  { id: 'tool-error', label: '工具报错', hint: '工具结果 isError=true（message 级或 part 级都算）' },
   { id: 'llm-retry', label: '模型重试', hint: '同一 step 内发生 llm/retry' },
   { id: 'repeated-call', label: '重复调用', hint: '与本会话早前调用同名同参' },
   { id: 'empty-step', label: '空步', hint: '一步既无文本也无工具调用' },
   { id: 'approval-rejected', label: '审批被拒', hint: 'approval/decided 结果为 rejected/cancelled' },
-  { id: 'command-error', label: '命令失败', hint: 'command/done kind=error' },
+  { id: 'command-error', label: '命令失败', hint: 'shell 结果出现 [exit code: 非0]，或 command/done kind=error' },
   { id: 'turn-aborted', label: '轮次中断', hint: 'turn/end 非 completed，归因到该轮最后一步' },
 ]
 
@@ -126,6 +126,11 @@ export const ERROR_CLASSES = [
     id: 'not-found',
     label: '未找到 / 无匹配',
     patterns: [/no matches found/i, /not found/i, /0 results/i],
+  },
+  {
+    id: 'exit-code',
+    label: '退出码非 0',
+    patterns: [/\[exit code: [1-9]\d*\]/i],
   },
 ]
 

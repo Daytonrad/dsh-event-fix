@@ -10,6 +10,13 @@
  *   step/start, step/end, turn/start, turn/end, assistant/message,
  *   tool/call, tool/result, llm/retry, approval/decided, command/done
  *
+ * A tool result reaches the log in two different shapes, and both must be
+ * read — the flat one only carries failures:
+ *
+ *   flat    { message: { role: 'tool', isError: true, content: [{ type: 'text', text }] } }
+ *   nested  { message: { role: 'user', content: [{ type: 'tool-result',
+ *               isError, toolCallId, content: [{ type: 'text', text }] }] } }
+ *
  * Nothing is inferred about why the model did something. A step is "invalid"
  * only when an event explicitly says something failed or repeated.
  */
@@ -22,12 +29,16 @@ import {
   errorSnippet,
 } from './taxonomy.js'
 
-export const STATE_VERSION = 2
+export const STATE_VERSION = 3
 export const PROJECTION_KEY = 'step-errors'
 export const MAX_RECENT = 20
 const MAX_SEEN_CALLS = 5000
 const MAX_TURNS = 500
 const WRITE_TOOLS = new Set(['write', 'edit', 'apply_patch', 'patch', 'multi_edit', 'str_replace', 'notebook_edit'])
+// DSH reports a shell command's outcome as a normal result plus an exit marker,
+// so a non-zero exit code never shows up as `isError`.
+const SHELL_TOOLS = new Set(['pwsh', 'powershell', 'bash', 'sh', 'shell', 'exec', 'command', 'cmd', 'zsh'])
+const EXIT_CODE = /\[exit code: (-?\d+)\]/i
 
 export function emptyUsage() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
@@ -70,6 +81,7 @@ export function createSessionState(header = {}) {
       durationMs: 0,
       toolCalls: 0,
       toolErrors: 0,
+      commandFailures: 0,
       retries: 0,
       retryDelayMs: 0,
     },
@@ -78,6 +90,7 @@ export function createSessionState(header = {}) {
       usage: emptyUsage(),
       durationMs: 0,
       toolErrors: 0,
+      commandFailures: 0,
       duplicates: 0,
     },
     byKind: {},
@@ -92,6 +105,8 @@ export function createSessionState(header = {}) {
     lastCorrection: null,
     seenCalls: {},
     seenCallCount: 0,
+    callNames: {},
+    callNameCount: 0,
     mutationCount: 0,
     updatedAt: null,
   }
@@ -254,55 +269,115 @@ function addToolCall(state, data, at) {
     signature,
     duplicate,
     isError: false,
+    commandFailure: false,
+    exitCode: null,
     errorClass: null,
     snippet: '',
+  }
+  // Results often arrive without a tool name (`source` only carries `callId`),
+  // so remember the binding while the call is still in view.
+  let callNames = withStep.callNames
+  let callNameCount = withStep.callNameCount
+  if (callId !== null && callNames[callId] === undefined && callNameCount < MAX_SEEN_CALLS) {
+    callNames = { ...callNames, [callId]: name }
+    callNameCount += 1
   }
   return {
     ...withStep,
     seenCalls,
     seenCallCount,
+    callNames,
+    callNameCount,
     openStep: { ...withStep.openStep, calls: [...withStep.openStep.calls, call] },
     updatedAt: at ?? withStep.updatedAt,
   }
 }
 
+/** Flatten both tool-result shapes into plain text. */
+export function resultText(message) {
+  const parts = Array.isArray(message?.content) ? message.content : []
+  const out = []
+  for (const part of parts) {
+    if (typeof part?.text === 'string') out.push(part.text)
+    if (Array.isArray(part?.content)) {
+      for (const inner of part.content) if (typeof inner?.text === 'string') out.push(inner.text)
+    }
+  }
+  return out.join('\n').trim()
+}
+
 function addToolResult(state, data, at) {
   const withStep = ensureStep(state, data, at)
-  const callId = data.toolCallId ?? data.message?.toolCallId ?? data.message?.source?.callId ?? null
-  const isError = data.message?.isError === true
-  const text = (Array.isArray(data.message?.content) ? data.message.content : [])
-    .map(part => part?.text ?? '')
-    .join('\n')
-    .trim()
+  const message = data.message ?? {}
+  const parts = Array.isArray(message.content) ? message.content : []
+  const callId = message.toolCallId ?? data.toolCallId ?? message.source?.callId ?? parts[0]?.toolCallId ?? null
+  const text = resultText(message)
+  // Flat results carry the flag on the message; nested ones carry it on the part.
+  const flagged = message.isError === true || parts.some(part => part?.isError === true)
 
   const calls = [...withStep.openStep.calls]
   let index = callId === null ? -1 : calls.findIndex(call => call.callId === callId)
   if (index < 0) {
+    const known = callId === null ? undefined : withStep.callNames[callId]
     calls.push({
       callId,
-      name: String(data.message?.source?.toolName ?? data.toolName ?? 'unknown'),
+      name: String(message.source?.toolName ?? data.toolName ?? known ?? 'unknown'),
       signature: null,
       duplicate: false,
       isError: false,
+      commandFailure: false,
+      exitCode: null,
       errorClass: null,
       snippet: '',
     })
     index = calls.length - 1
   }
-  const errorClass = isError ? classifyToolError(text) : null
+
+  const name = calls[index].name
+  const exitMatch = EXIT_CODE.exec(text)
+  const exitCode = exitMatch === null ? null : Number(exitMatch[1])
+  const commandFailure = !flagged && SHELL_TOOLS.has(name) && exitCode !== null && exitCode !== 0
+  const failed = flagged || commandFailure
+  const errorClass = failed ? classifyToolError(text) : null
+  const snippet = failed ? resultSnippet(text, exitCode) : calls[index].snippet
+
   calls[index] = {
     ...calls[index],
-    isError: isError || calls[index].isError,
+    isError: flagged || calls[index].isError,
+    commandFailure: commandFailure || calls[index].commandFailure === true,
+    exitCode: exitCode ?? calls[index].exitCode ?? null,
     errorClass: errorClass ?? calls[index].errorClass,
-    snippet: isError ? errorSnippet(text) : calls[index].snippet,
+    snippet,
   }
-  const mutated = !isError && WRITE_TOOLS.has(calls[index].name)
+  const mutated = !failed && WRITE_TOOLS.has(name)
   return {
     ...withStep,
     mutationCount: withStep.mutationCount + (mutated ? 1 : 0),
     openStep: { ...withStep.openStep, calls },
     updatedAt: at ?? withStep.updatedAt,
   }
+}
+
+/**
+ * One-line explanation of a failed call. Shell output is mostly noise
+ * ("(no output)", "[exit code: 1]"), so prefer the line that names the cause.
+ */
+function resultSnippet(text, exitCode) {
+  const lines = String(text ?? '')
+    .split(/\r?\n/u)
+    .map(line => line.trim())
+    .filter(line => line !== '')
+  const noise = /^[[(]?(?:exit code: -?\d+|no output|stderr|stdout)[\])]?$/i
+  const causal = lines.find(line => !noise.test(line) && /error|fail|cannot|denied|refus|not found|no such|unknown|invalid|missing/i.test(line))
+  const informative = causal ?? lines.find(line => !noise.test(line))
+  if (informative !== undefined) return clip(informative, 160)
+  if (exitCode !== null && exitCode !== 0) return `命令退出码 ${exitCode}`
+  return clip(lines[0] ?? '', 160)
+}
+
+function clip(value, limit) {
+  const text = String(value ?? '')
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
 }
 
 function addRetry(state, data, at) {
@@ -354,13 +429,15 @@ function finalizeStep(state, endedAt) {
   const step = state.openStep
   if (step === null) return state
   const errorCalls = step.calls.filter(call => call.isError)
+  const failedCalls = step.calls.filter(call => call.isError || call.commandFailure === true)
+  const commandCalls = step.calls.filter(call => call.commandFailure === true)
   const duplicateCalls = step.calls.filter(call => call.duplicate)
   const kinds = []
   if (errorCalls.length > 0) kinds.push('tool-error')
   if (step.retries > 0) kinds.push('llm-retry')
   if (duplicateCalls.length > 0) kinds.push('repeated-call')
   if (step.denied > 0) kinds.push('approval-rejected')
-  if (step.commandError) kinds.push('command-error')
+  if (step.commandError || commandCalls.length > 0) kinds.push('command-error')
   if (step.calls.length === 0 && step.textChars === 0 && !step.commandError) kinds.push('empty-step')
 
   const durationMs = step.startedAt !== null && endedAt !== null
@@ -373,20 +450,24 @@ function finalizeStep(state, endedAt) {
     durationMs,
     usage: step.usage,
     kinds,
-    errors: errorCalls.map(call => ({
+    errors: failedCalls.map(call => ({
       tool: call.name,
       class: call.errorClass ?? 'other',
       message: call.snippet,
       callId: call.callId,
+      kind: call.isError ? 'tool-error' : 'exit-code',
+      exitCode: call.exitCode ?? null,
     })),
     retries: step.retries,
     retryDelayMs: step.retryDelayMs,
     toolCalls: step.calls.length,
     toolErrors: errorCalls.length,
+    commandFailures: commandCalls.length,
     duplicateCalls: duplicateCalls.length,
     calls: step.calls.map(call => ({
       name: call.name,
       isError: call.isError,
+      commandFailure: call.commandFailure === true,
       errorClass: call.errorClass,
     })),
   })
@@ -400,6 +481,7 @@ function commitStep(state, info) {
     durationMs: state.totals.durationMs + info.durationMs,
     toolCalls: state.totals.toolCalls + info.toolCalls,
     toolErrors: state.totals.toolErrors + info.toolErrors,
+    commandFailures: (state.totals.commandFailures ?? 0) + info.commandFailures,
     retries: state.totals.retries + info.retries,
     retryDelayMs: state.totals.retryDelayMs + info.retryDelayMs,
   }
@@ -410,9 +492,10 @@ function commitStep(state, info) {
   }
   for (const call of info.calls) {
     const entry = byTool[call.name] ?? { calls: 0, errors: 0 }
+    const failed = call.isError || call.commandFailure === true
     byTool[call.name] = {
       calls: entry.calls + 1,
-      errors: entry.errors + (call.isError ? 1 : 0),
+      errors: entry.errors + (failed ? 1 : 0),
     }
   }
 
@@ -449,6 +532,7 @@ function commitStep(state, info) {
       usage: addUsage(state.invalid.usage, info.usage),
       durationMs: state.invalid.durationMs + info.durationMs,
       toolErrors: state.invalid.toolErrors + info.toolErrors,
+      commandFailures: (state.invalid.commandFailures ?? 0) + info.commandFailures,
       duplicates: state.invalid.duplicates + info.duplicateCalls,
     }
     byKind = { ...state.byKind }
@@ -474,6 +558,7 @@ function commitStep(state, info) {
     invalid,
     kinds: info.kinds,
     toolErrors: info.toolErrors,
+    commandFailures: info.commandFailures,
     retries: info.retries,
   }
 
@@ -533,6 +618,7 @@ function endTurn(state, data, at) {
         usage: addUsage(withKind.invalid.usage, last.usage),
         durationMs: withKind.invalid.durationMs + last.durationMs,
         toolErrors: withKind.invalid.toolErrors + last.toolErrors,
+        commandFailures: withKind.invalid.commandFailures ?? 0,
         duplicates: withKind.invalid.duplicates,
       },
       recent: [{
@@ -608,6 +694,7 @@ export function sessionView(state) {
       wastedMs: state.invalid.durationMs,
       toolCalls: state.totals.toolCalls,
       toolErrors: state.totals.toolErrors,
+      commandFailures: state.totals.commandFailures ?? 0,
       retries: state.totals.retries,
       retryDelayMs: state.totals.retryDelayMs,
       failedTurns: state.failedTurns,
@@ -693,8 +780,8 @@ export function renderSummary(view) {
     + ` · 浪费时长 ${formatDuration(totals.wastedMs)}（总 ${formatDuration(totals.durationMs)}）`,
   )
   lines.push(
-    `工具调用 ${totals.toolCalls} 次，报错 ${totals.toolErrors} 次；模型重试 ${totals.retries} 次，`
-    + `退避 ${formatDuration(totals.retryDelayMs)}；失败轮次 ${totals.failedTurns}`,
+    `工具调用 ${totals.toolCalls} 次，报错 ${totals.toolErrors} 次；命令退出码非 0 ${totals.commandFailures} 次；`
+    + `模型重试 ${totals.retries} 次，退避 ${formatDuration(totals.retryDelayMs)}；失败轮次 ${totals.failedTurns}`,
   )
   if (view.byKind.length > 0) {
     lines.push('')

@@ -33,6 +33,7 @@ export function buildReport(sessions, meta = {}) {
     wastedMs: 0,
     toolCalls: 0,
     toolErrors: 0,
+    commandFailures: 0,
     retries: 0,
     failedTurns: 0,
   }
@@ -55,6 +56,7 @@ export function buildReport(sessions, meta = {}) {
     totals.wastedMs += t.wastedMs
     totals.toolCalls += t.toolCalls
     totals.toolErrors += t.toolErrors
+    totals.commandFailures += t.commandFailures ?? 0
     totals.retries += t.retries
     totals.failedTurns += t.failedTurns
 
@@ -307,7 +309,8 @@ export function renderHtmlReport(report, options = {}) {
   header h1{margin:0 0 6px;font-size:24px;letter-spacing:-.01em}
   header p{margin:0;color:var(--muted);font-size:13px}
   .meta{margin-top:10px;color:var(--muted);font-size:12px;word-break:break-all}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:22px 0 8px}
+  .kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:22px 0 8px}
+  @media (width<=760px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
   .kpi-label{color:var(--muted);font-size:12px}
   .kpi-value{font-size:26px;font-weight:600;margin:4px 0 2px;font-variant-numeric:tabular-nums}
@@ -352,6 +355,7 @@ export function renderHtmlReport(report, options = {}) {
     ${kpiCard('浪费 token', formatTokens(t.wastedTokens), `占总用量 ${t.tokenRatio}%`, 'warn')}
     ${kpiCard('浪费时长', formatDuration(t.wastedMs), `占总时长 ${t.timeRatio}%`, 'warn')}
     ${kpiCard('工具报错', String(t.toolErrors), `${t.toolCalls} 次调用中的失败`, '')}
+    ${kpiCard('命令失败', String(t.commandFailures), 'shell 退出码非 0', '')}
     ${kpiCard('失败轮次', String(t.failedTurns), `重试 ${t.retries} 次`, '')}
   </div>
 
@@ -415,7 +419,8 @@ export function renderHtmlReport(report, options = {}) {
 
   <footer>
     <p><b>口径</b>：无效步 = 该 step 出现了明确的失败/重复/空转事件
-    （工具 isError、同 step 内 llm/retry、与本会话早前同名同参的重复调用、审批被拒、命令失败、无文本无调用的空步、
+    （工具 isError —— message 级与 part 级两种结果结构都算、shell 结果出现 <span class="mono">[exit code: 非0]</span>、
+    同 step 内 llm/retry、与本会话早前同名同参的重复调用、审批被拒、command/done 失败、无文本无调用的空步、
     非 completed 轮次的最后一步）。</p>
     <p><b>浪费 token</b> = 这些 step 实际发生的 input/output/cache 用量之和，含缓存读取；它衡量「无效动作附带的算力」，
     不是供应商账单。缓存读取单价更低，因此 token 占比通常高于费用占比。</p>
@@ -433,7 +438,7 @@ export function renderTextReport(report) {
   const lines = []
   lines.push(`DSH Step 无效动作分析 · ${t.sessions} 会话 / ${t.steps} 步`)
   lines.push(`无效步 ${t.invalidSteps}（${t.ratio}%） · 浪费 token ${formatTokens(t.wastedTokens)}（${t.tokenRatio}%） · 浪费时长 ${formatDuration(t.wastedMs)}（${t.timeRatio}%）`)
-  lines.push(`工具调用 ${t.toolCalls}，报错 ${t.toolErrors} · 模型重试 ${t.retries} · 失败轮次 ${t.failedTurns}`)
+  lines.push(`工具调用 ${t.toolCalls}，报错 ${t.toolErrors} · 命令退出码非 0 ${t.commandFailures} · 模型重试 ${t.retries} · 失败轮次 ${t.failedTurns}`)
   if (report.byKind.length > 0) {
     lines.push('')
     lines.push('无效类型：')

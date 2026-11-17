@@ -149,7 +149,7 @@ window.__ModuleLoader__.load({
       if (position === null) return null
 
       const totals = view.totals ?? {}
-      const kinds = (view.byKind ?? []).slice(0, 5)
+      const kinds = (view.byKind ?? []).slice(0, 6)
       const kindMax = Math.max(1, ...kinds.map(item => item.count))
       const classes = (view.byClass ?? []).slice(0, 4)
       const recent = (view.recent ?? []).slice(0, 5)
@@ -183,8 +183,8 @@ window.__ModuleLoader__.load({
             h('div', { className: 'ef-kpi-value' }, `${totals.toolErrors ?? 0}`),
           ),
           h('div', { className: 'ef-kpi' },
-            h('div', { className: 'ef-kpi-label' }, '模型重试'),
-            h('div', { className: 'ef-kpi-value' }, `${totals.retries ?? 0}`),
+            h('div', { className: 'ef-kpi-label' }, '命令失败'),
+            h('div', { className: 'ef-kpi-value' }, `${totals.commandFailures ?? 0}`),
           ),
         ),
 
@@ -231,7 +231,7 @@ window.__ModuleLoader__.load({
           : h('div', { className: 'ef-empty' }, '本会话暂无无效步。'),
 
         h('div', { className: 'ef-note' },
-          '口径：只有明确的失败/重试/重复/空转事件才计入；完整面板用 `dsh-event-fix scan --html`。'),
+          '口径：isError=true（message 级或 part 级）、shell 退出码非 0、重试、重复、空转、中断；完整面板用 `dsh-event-fix scan --html`。'),
       ),
         document.body,
       )

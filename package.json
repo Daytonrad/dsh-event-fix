@@ -1,6 +1,6 @@
 {
   "name": "dsh-event-fix",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Step-level error and wasted-work analytics for DeepSeek Harness sessions: an event-sourcing side branch over the most obvious session events.",
   "license": "MIT",
