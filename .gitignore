@@ -4,3 +4,4 @@ data/
 .scratch/
 *.log
 .DS_Store
+.workbuddy/
