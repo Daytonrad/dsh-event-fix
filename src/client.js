@@ -683,10 +683,13 @@ window.__ModuleLoader__.load({
       lines.push('')
       lines.push(`总览：${exact(totals.steps)} 步里 ${exact(totals.invalidSteps)} 步无效（${Number(totals.ratio ?? 0).toFixed(1)}%），`
         + `浪费 ${formatTokens(totals.wastedTokens ?? 0)} token、${formatDuration(totals.wastedMs ?? 0)}。`)
-      lines.push(`失败之后（共判定 ${exact(followups.episodes)} 次，仅统计同一轮内下一步的回应）：`)
-      lines.push(`- 下一步成功 ${exact(buckets.ok)}${rate === null ? '' : `（恢复率 ${percent(rate)}%）`}`)
+      lines.push(`失败之后（共 ${exact(followups.episodes)} 个失败回合，仅统计同一轮内下一步的回应）：`)
+      lines.push(`- 下一步成功 ${exact(buckets.ok)}（占全部 ${percent(buckets.ok / Math.max(1, followups.episodes ?? 1))}%）`)
       lines.push(`- 下一步仍失败 ${exact(buckets.failed)}`)
       lines.push(`- 放弃（本轮没有后续调用） ${exact(buckets.abandoned)}`)
+      if (rate !== null) {
+        lines.push(`- 在有后续调用的 ${exact(buckets.ok + buckets.failed)} 次里，恢复率 ${percent(rate)}%`)
+      }
       const actions = followupActions(followups)
       if (actions.length > 0) {
         lines.push('做法与效果：')
@@ -757,6 +760,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'efp-empty' }, '还没有可判定的失败：需要有失败之后又继续调用工具的记录。')
       }
       const rate = recoveryRate(followups)
+      const buckets = followupBuckets(followups)
       return h('div', null,
         h('div', { className: 'efp-stack' },
           ...segments.map(item => h('span', {
@@ -774,8 +778,9 @@ window.__ModuleLoader__.load({
           )),
         ),
         h('div', { className: 'efp-inline' },
-          h('span', null, `判定 ${exact(episodes)} 次失败`),
-          h('span', null, rate === null ? '恢复率 —' : `下一步成功率 ${Math.round(rate * 1000) / 10}%`),
+          h('span', null, `失败回合 ${exact(episodes)} 次`),
+          h('span', null, `其中 ${exact(buckets.ok + buckets.failed)} 次有后续调用`),
+          h('span', null, rate === null ? '恢复率 —' : `成功 ${Math.round(rate * 1000) / 10}%`),
         ),
         h('div', { className: 'efp-actrows' },
           ...followupActions(followups).map(item => {

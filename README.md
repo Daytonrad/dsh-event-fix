@@ -295,7 +295,7 @@ dsh web --no-open
 ## 开发
 
 ```powershell
-npm test     # 50 个测试：taxonomy / analyzer / followup / report / snapshot / plugin / client / store
+npm test     # 51 个测试：taxonomy / analyzer / followup / report / snapshot / plugin / client / store
 npm run check  # 19 个文件语法检查
 npm run scan -- --limit 5 --html .\reports\preview.html
 ```

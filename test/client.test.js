@@ -5,13 +5,21 @@ import vm from 'node:vm'
 import { sessionView, summarizeRecords } from '../src/analyzer.js'
 import { buildFixtureRecords } from './fixtures.js'
 
-function fakeReact() {
+function fakeReact(states = []) {
+  let cursor = 0
   function createElement(type, props, ...children) {
     return { type, props: props ?? {}, children: children.flat() }
   }
   return {
     createElement,
-    useState: initial => [initial, () => {}],
+    // Hooks are called in render order, so a queue lets a test hand the page a
+    // snapshot without a second render pass. Anything not provided keeps its
+    // initial value, which is what the real hook would do on first paint.
+    useState: initial => {
+      const value = cursor < states.length ? states[cursor] : initial
+      cursor += 1
+      return [value, () => {}]
+    },
     useRef: () => ({ current: null }),
     useCallback: fn => fn,
     useEffect: () => {},
@@ -19,7 +27,7 @@ function fakeReact() {
   }
 }
 
-function loadClientModule() {
+function loadClientModule(states = []) {
   const code = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
   let loaded = null
   const style = { dataset: {}, textContent: '' }
@@ -41,7 +49,7 @@ function loadClientModule() {
   vm.runInNewContext(code, sandbox, { filename: 'client.js' })
   assert.ok(loaded !== null, 'module loader was called')
   assert.equal(loaded.id, 'dsh-event-fix')
-  const react = fakeReact()
+  const react = fakeReact(states)
   const module = loaded.factory(name => {
     if (name === 'react') return react
     if (name === 'react-dom') return { createPortal: element => element }
@@ -130,6 +138,58 @@ test('settings page renders its shell before data arrives', () => {
   const joined = texts.join(' | ')
   assert.match(joined, /无效动作统计/)
   assert.match(joined, /读取统计/)
+})
+
+test('settings page renders every card once a snapshot arrives', () => {
+  const snapshot = {
+    state: 'ready',
+    generatedAt: '2026-11-17T21:00:00.000Z',
+    windowDays: 30,
+    scannedSessions: 150,
+    totals: {
+      steps: 5782, invalidSteps: 866, ratio: 15, wastedTokens: 78620000, wastedMs: 91620000,
+      toolErrors: 526, commandFailures: 366, retries: 140, sessions: 150,
+    },
+    days: [
+      { date: '2026-11-10', steps: 120, invalid: 9, ratio: 7.5, wastedTokens: 800000 },
+      { date: '2026-11-11', steps: 316, invalid: 33, ratio: 10.4, wastedTokens: 2740000 },
+    ],
+    kinds: [{ kind: 'tool-error', label: '工具报错', count: 409 }],
+    classes: [{ cls: 'exit-code', label: '退出码非 0', count: 215 }],
+    tools: [{
+      tool: 'pwsh', calls: 2902, errors: 414, rate: 14.3,
+      topClass: { id: 'exit-code', label: '退出码非 0', count: 207 },
+      recoveryEpisodes: 369, recovered: 280,
+    }],
+    followups: {
+      episodes: 733, same: 0, sameOk: 0, sameFail: 0,
+      changedArgs: 420, changedArgsOk: 310, changedArgsFail: 110,
+      changedTool: 288, changedToolOk: 264, changedToolFail: 24,
+      unknown: 0, abandoned: 25,
+    },
+  }
+  const { module } = loadClientModule([snapshot])
+  const page = slotComponent(module, 'event-fix-stats')
+  const texts = []
+  const walk = node => {
+    if (node === null || node === undefined || node === false) return
+    if (typeof node === 'string') { texts.push(node); return }
+    if (typeof node === 'number') { texts.push(String(node)); return }
+    if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+    for (const child of node.children ?? []) walk(child)
+  }
+  walk(page({}))
+  const joined = texts.join(' | ')
+
+  assert.match(joined, /失败之后 agent 做了什么/)
+  assert.match(joined, /失败回合 733 次/)
+  assert.match(joined, /其中 708 次有后续调用/)
+  assert.match(joined, /改参数再试/)
+  assert.match(joined, /下一步成功 92%/)
+  assert.match(joined, /复制排查 prompt/)
+  assert.match(joined, /76% · 280\/369/)
+  assert.match(joined, /退出码非 0 207/)
+  assert.match(joined, /浪费 token/)
 })
 
 test('follow-up reading names the dominant failure mode', () => {
