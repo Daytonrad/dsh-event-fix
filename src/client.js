@@ -520,11 +520,15 @@ window.__ModuleLoader__.load({
         error === null
           ? null
           : h('div', { className: 'efp-strip efp-strip-error' },
-              `读取统计失败：${error}。若刚安装插件，重启一次 DSH 让宿主路由生效。`),
+              error === 'HTTP 404'
+                ? '读取统计失败：HTTP 404 —— 宿主侧路由没有注册。插件源码改动不会被 HMR 热加载，需要重启一次 DSH（设置页本身由浏览器从磁盘读取，所以能先显示出来）。'
+                : `读取统计失败：${error}。`),
 
-        loading
+        loading && error === null
           ? h('div', { className: 'efp-empty' }, '正在读取统计…')
-          : h('div', null,
+          : loading
+            ? null
+            : h('div', null,
               h('div', { className: 'efp-kpis' },
                 h(Kpi, { label: '无效步', value: `${exact(totals.invalidSteps)} / ${exact(totals.steps)}`, hint: `占比 ${Number(totals.ratio ?? 0).toFixed(1)}%` }),
                 h(Kpi, { label: '浪费 token', value: formatTokens(totals.wastedTokens ?? 0), hint: `占总用量 ${Number(totals.tokenRatio ?? 0).toFixed(1)}%` }),
