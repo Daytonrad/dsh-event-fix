@@ -1,0 +1,78 @@
+{
+  "name": "dsh-event-fix",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Step-level error and wasted-work analytics for DeepSeek Harness sessions: an event-sourcing side branch over the most obvious session events.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SSHOOTING/dsh-event-fix.git"
+  },
+  "homepage": "https://github.com/SSHOOTING/dsh-event-fix#readme",
+  "bugs": {
+    "url": "https://github.com/SSHOOTING/dsh-event-fix/issues"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./analyzer": "./src/analyzer.js",
+    "./taxonomy": "./src/taxonomy.js",
+    "./report": "./src/report.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-event-fix": "bin/dsh-event-fix.mjs"
+  },
+  "files": [
+    "src",
+    "bin",
+    "docs",
+    "cordis.patch.yml",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "event-sourcing",
+    "observability",
+    "step",
+    "error-analysis",
+    "token-waste"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0-rc.2 <0.2.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check-syntax.mjs",
+    "scan": "node bin/dsh-event-fix.mjs scan"
+  }
+}

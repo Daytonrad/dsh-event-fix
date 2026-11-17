@@ -1,0 +1,15 @@
+# Portable bundle patch for dsh-event-fix.
+#
+# The ledger is optional. When enabled it appends one JSONL record per finished
+# step, so history survives DSH upgrades and can be aggregated by the CLI even
+# after the raw session logs are rotated away.
+#
+# The default ledger path lives inside the installed package, which is fine for
+# a local link install. Set ledgerPath to a user-owned writable directory for a
+# packaged install.
+- insert:
+    - id: event-fix
+      name: dsh-event-fix
+      config:
+        ledgerEnabled: true
+        # ledgerPath: '<writable data directory>/step-ledger.jsonl'

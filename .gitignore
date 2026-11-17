@@ -1,0 +1,6 @@
+node_modules/
+reports/
+data/
+.scratch/
+*.log
+.DS_Store

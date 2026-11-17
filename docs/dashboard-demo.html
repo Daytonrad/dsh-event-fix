@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DSH Step 无效动作分析</title>
+<style>
+  :root{color-scheme:light;--ink:#1c1f23;--muted:#6b7280;--line:#e6e8eb;--bg:#f6f7f9;--card:#ffffff;--red:#d64545;--amber:#c9a227;--teal:#2f7d78}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  main{max-width:980px;margin:0 auto;padding:32px 20px 64px}
+  header h1{margin:0 0 6px;font-size:24px;letter-spacing:-.01em}
+  header p{margin:0;color:var(--muted);font-size:13px}
+  .meta{margin-top:10px;color:var(--muted);font-size:12px;word-break:break-all}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:22px 0 8px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi-label{color:var(--muted);font-size:12px}
+  .kpi-value{font-size:26px;font-weight:600;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+  .kpi-note{color:var(--muted);font-size:11px}
+  .kpi.bad .kpi-value{color:var(--red)}
+  .kpi.warn .kpi-value{color:var(--amber)}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-top:16px}
+  section h2{margin:0 0 4px;font-size:15px;font-weight:600}
+  section .sub{color:var(--muted);font-size:12px;margin:0 0 12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  @media (max-width:820px){.grid2{grid-template-columns:1fr}}
+  .bar-row{display:grid;grid-template-columns:140px 1fr 44px;align-items:center;gap:10px;margin:7px 0;font-size:12px}
+  .bar-label{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar-track{background:#eceef1;border-radius:6px;height:9px;overflow:hidden}
+  .bar-fill{display:block;height:100%;background:var(--red);border-radius:6px}
+  .bar-fill.amber{background:var(--amber)}
+  .bar-count{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;color:var(--muted);font-weight:500;padding:8px 8px;border-bottom:1px solid var(--line)}
+  td{padding:7px 8px;border-bottom:1px solid #f1f2f4;vertical-align:top}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+  .muted{color:var(--muted)}
+  .path{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  .tag{display:inline-block;background:#fdecec;color:#a52a2a;border-radius:6px;padding:0 6px;font-size:11px}
+  .chip{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 10px;margin:0 6px 6px 0;font-size:12px;color:var(--muted)}
+  .chip b{color:var(--ink)}
+  footer{margin-top:18px;color:var(--muted);font-size:11.5px;line-height:1.8}
+  footer b{color:var(--ink);font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>DSH Step 无效动作分析</h1>
+    <p>以 step 为粒度的错误形态与浪费统计 · event sourcing 的只读分支</p>
+    <div class="meta">生成时间 2026/11/10 11:00:00 · 会话 1 个 · 步 7 · 数据源 （示例数据：test/fixtures.js 构造的 3 轮会话）</div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi bad">
+    <div class="kpi-label">无效步占比</div>
+    <div class="kpi-value">85.7%</div>
+    <div class="kpi-note">6 / 7 步</div>
+  </div>
+    <div class="kpi warn">
+    <div class="kpi-label">浪费 token</div>
+    <div class="kpi-value">660</div>
+    <div class="kpi-note">占总用量 85.7%</div>
+  </div>
+    <div class="kpi warn">
+    <div class="kpi-label">浪费时长</div>
+    <div class="kpi-value">5.9s</div>
+    <div class="kpi-note">占总时长 85.5%</div>
+  </div>
+    <div class="kpi ">
+    <div class="kpi-label">工具报错</div>
+    <div class="kpi-value">2</div>
+    <div class="kpi-note">5 次调用中的失败</div>
+  </div>
+    <div class="kpi ">
+    <div class="kpi-label">失败轮次</div>
+    <div class="kpi-value">2</div>
+    <div class="kpi-note">重试 1 次</div>
+  </div>
+  </div>
+
+  <section>
+    <h2>无效动作占比时序</h2>
+    <p class="sub">按自然日聚合，纵轴为无效步占当日总步数的百分比。</p>
+    <svg viewBox="0 0 880 210" role="img" aria-label="无效步占比时序图">
+    <defs><linearGradient id="ratio" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d64545" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#d64545" stop-opacity="0.02"/>
+    </linearGradient></defs>
+    <line x1="46" y1="180.0" x2="862" y2="180.0" stroke="#eef0f3" stroke-width="1"/>
+      <text x="38" y="184" text-anchor="end" fill="#9aa0a6" font-size="10">0%</text><line x1="46" y1="98.0" x2="862" y2="98.0" stroke="#eef0f3" stroke-width="1"/>
+      <text x="38" y="102" text-anchor="end" fill="#9aa0a6" font-size="10">43%</text><line x1="46" y1="16.0" x2="862" y2="16.0" stroke="#eef0f3" stroke-width="1"/>
+      <text x="38" y="20" text-anchor="end" fill="#9aa0a6" font-size="10">86%</text>
+    <path d="M454.0,16.0 L454.0,180.0 L454.0,180.0 Z" fill="url(#ratio)"/>
+    <path d="M454.0,16.0" fill="none" stroke="#d64545" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="454.0" cy="16.0" r="2.5" fill="#d64545"><title>11-10 · 85.7%</title></circle>
+    <text x="454.0" y="202" text-anchor="middle" fill="#9aa0a6" font-size="10">11-10</text>
+  </svg>
+  </section>
+
+  <section>
+    <h2>每日浪费 token</h2>
+    <p class="sub">无效步所消耗的 token 总量（含缓存读取），同一批 step 的另一面。</p>
+    <svg viewBox="0 0 880 190" role="img" aria-label="每日浪费 token">
+    <line x1="46" y1="160.0" x2="862" y2="160.0" stroke="#eef0f3" stroke-width="1"/>
+      <text x="38" y="164" text-anchor="end" fill="#9aa0a6" font-size="10">0</text><line x1="46" y1="88.0" x2="862" y2="88.0" stroke="#eef0f3" stroke-width="1"/>
+      <text x="38" y="92" text-anchor="end" fill="#9aa0a6" font-size="10">330</text><line x1="46" y1="16.0" x2="862" y2="16.0" stroke="#eef0f3" stroke-width="1"/>
+      <text x="38" y="20" text-anchor="end" fill="#9aa0a6" font-size="10">660</text><rect x="440.0" y="16.0" width="28.0" height="144.0" rx="3" fill="#c9a227" opacity="0.85">
+      <title>11-10 · 660 tok</title></rect><text x="454.0" y="182" text-anchor="middle" fill="#9aa0a6" font-size="10">11-10</text></svg>
+  </section>
+
+  <section class="grid2">
+    <div>
+      <h2>无效类型</h2>
+      <p class="sub">一个 step 可同时命中多个类型。</p>
+      <div class="bar-row">
+    <span class="bar-label" title="工具报错">工具报错</span>
+    <span class="bar-track"><span class="bar-fill " style="width:100%"></span></span>
+    <span class="bar-count">2</span>
+  </div><div class="bar-row">
+    <span class="bar-label" title="轮次中断">轮次中断</span>
+    <span class="bar-track"><span class="bar-fill " style="width:100%"></span></span>
+    <span class="bar-count">2</span>
+  </div><div class="bar-row">
+    <span class="bar-label" title="模型重试">模型重试</span>
+    <span class="bar-track"><span class="bar-fill " style="width:50%"></span></span>
+    <span class="bar-count">1</span>
+  </div><div class="bar-row">
+    <span class="bar-label" title="重复调用">重复调用</span>
+    <span class="bar-track"><span class="bar-fill " style="width:50%"></span></span>
+    <span class="bar-count">1</span>
+  </div><div class="bar-row">
+    <span class="bar-label" title="空步">空步</span>
+    <span class="bar-track"><span class="bar-fill " style="width:50%"></span></span>
+    <span class="bar-count">1</span>
+  </div><div class="bar-row">
+    <span class="bar-label" title="审批被拒">审批被拒</span>
+    <span class="bar-track"><span class="bar-fill " style="width:50%"></span></span>
+    <span class="bar-count">1</span>
+  </div>
+    </div>
+    <div>
+      <h2>工具报错分类</h2>
+      <p class="sub">按错误文本首行归类，未知归入「其他」。</p>
+      <div class="bar-row">
+    <span class="bar-label" title="路径/文件不存在">路径/文件不存在</span>
+    <span class="bar-track"><span class="bar-fill amber" style="width:100%"></span></span>
+    <span class="bar-count">1</span>
+  </div><div class="bar-row">
+    <span class="bar-label" title="权限 / 沙箱拒绝">权限 / 沙箱拒绝</span>
+    <span class="bar-track"><span class="bar-fill amber" style="width:100%"></span></span>
+    <span class="bar-count">1</span>
+  </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>工具错误率</h2>
+    <p class="sub">错误次数最多的工具，及该工具自身的失败率。</p>
+    <table>
+      <thead><tr><th>工具</th><th class="num">调用</th><th class="num">报错</th><th class="num">失败率</th></tr></thead>
+      <tbody><tr>
+      <td class="mono">read</td>
+      <td class="num">3</td>
+      <td class="num">1</td>
+      <td class="num">33.3%</td>
+    </tr><tr>
+      <td class="mono">pwsh</td>
+      <td class="num">1</td>
+      <td class="num">1</td>
+      <td class="num">100%</td>
+    </tr><tr>
+      <td class="mono">glob</td>
+      <td class="num">1</td>
+      <td class="num">0</td>
+      <td class="num">0%</td>
+    </tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>轮次结束原因</h2>
+    <p class="sub">非 completed 的轮次会把该轮最后一步标记为中断。</p>
+    <div><span class="chip">正常结束 <b>1</b></span><span class="chip">用户中止 <b>1</b></span><span class="chip">模型/请求报错 <b>1</b></span></div>
+  </section>
+
+  <section>
+    <h2>最近无效步</h2>
+    <p class="sub">按结束时间倒序，最多 30 条。路径列用于判断是哪类工作区反复踩坑。</p>
+    <table>
+      <thead><tr><th>日期</th><th>位置</th><th>类型</th><th>报错</th><th class="num">token</th><th class="num">耗时</th><th>工作区</th></tr></thead>
+      <tbody><tr>
+      <td class="mono">2026-11-10</td>
+      <td>T3 · S1</td>
+      <td><span class="tag">轮次中断</span></td>
+      <td><span class="muted">—</span></td>
+      <td class="num">110</td>
+      <td class="num">1.0s</td>
+      <td class="path">E:////fixture</td>
+    </tr><tr>
+      <td class="mono">2026-11-10</td>
+      <td>T2 · S2</td>
+      <td><span class="tag">工具报错</span> <span class="tag">审批被拒</span></td>
+      <td><span class="mono">pwsh</span> <span class="muted">权限 / 沙箱拒绝</span></td>
+      <td class="num">110</td>
+      <td class="num">0.9s</td>
+      <td class="path">E:////fixture</td>
+    </tr><tr>
+      <td class="mono">2026-11-10</td>
+      <td>T2 · S1</td>
+      <td><span class="tag">重复调用</span></td>
+      <td><span class="muted">—</span></td>
+      <td class="num">110</td>
+      <td class="num">1.0s</td>
+      <td class="path">E:////fixture</td>
+    </tr><tr>
+      <td class="mono">2026-11-10</td>
+      <td>T1 · S4</td>
+      <td><span class="tag">空步</span></td>
+      <td><span class="muted">—</span></td>
+      <td class="num">110</td>
+      <td class="num">1.0s</td>
+      <td class="path">E:////fixture</td>
+    </tr><tr>
+      <td class="mono">2026-11-10</td>
+      <td>T1 · S3</td>
+      <td><span class="tag">模型重试</span></td>
+      <td><span class="muted">—</span></td>
+      <td class="num">110</td>
+      <td class="num">1.0s</td>
+      <td class="path">E:////fixture</td>
+    </tr><tr>
+      <td class="mono">2026-11-10</td>
+      <td>T1 · S2</td>
+      <td><span class="tag">工具报错</span></td>
+      <td><span class="mono">read</span> <span class="muted">路径/文件不存在</span></td>
+      <td class="num">110</td>
+      <td class="num">1.0s</td>
+      <td class="path">E:////fixture</td>
+    </tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>会话排行</h2>
+    <p class="sub">按浪费 token 排序的前 12 个会话。</p>
+    <table>
+      <thead><tr><th>工作区 / 会话</th><th class="num">步</th><th class="num">无效</th><th class="num">占比</th><th class="num">浪费 token</th><th class="num">浪费时长</th><th class="num">失败轮次</th></tr></thead>
+      <tbody><tr>
+      <td class="path">E:////fixture</td>
+      <td class="num">7</td>
+      <td class="num">6</td>
+      <td class="num">85.71%</td>
+      <td class="num">660</td>
+      <td class="num">5.9s</td>
+      <td class="num">2</td>
+    </tr></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <p><b>口径</b>：无效步 = 该 step 出现了明确的失败/重复/空转事件
+    （工具 isError、同 step 内 llm/retry、与本会话早前同名同参的重复调用、审批被拒、命令失败、无文本无调用的空步、
+    非 completed 轮次的最后一步）。</p>
+    <p><b>浪费 token</b> = 这些 step 实际发生的 input/output/cache 用量之和，含缓存读取；它衡量「无效动作附带的算力」，
+    不是供应商账单。缓存读取单价更低，因此 token 占比通常高于费用占比。</p>
+    <p><b>浪费时长</b> = 无效步从 step/start 到 step/end 的墙钟时间之和，模型重试的退避时间包含在内。</p>
+    <p>数据来自本机 DSH 会话日志（只读，不上传）。报告为静态 HTML，无外部依赖。</p>
+  </footer>
+</main>
+</body>
+</html>
