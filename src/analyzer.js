@@ -29,7 +29,7 @@ import {
   errorSnippet,
 } from './taxonomy.js'
 
-export const STATE_VERSION = 3
+export const STATE_VERSION = 4
 export const PROJECTION_KEY = 'step-errors'
 export const MAX_RECENT = 20
 const MAX_SEEN_CALLS = 5000
@@ -65,6 +65,52 @@ export function totalOf(usage) {
   return usage?.total ?? 0
 }
 
+/**
+ * Counters for "what did the agent do right after a failure, and did it work".
+ *
+ * A failure episode starts when a tool call reports an error and is settled by
+ * the first tool call of a *later step in the same turn*: parallel calls in the
+ * same step never saw the error, so they are not recovery attempts.
+ *
+ * `episodes` counts settled episodes. Each is classified by what the next call
+ * did — `same` (identical tool + arguments), `changedArgs` (same tool, other
+ * arguments), `changedTool` (another tool) — and then by whether that call
+ * worked: `*Ok` / `*Fail`. `unknown` covers a follow-up call without a call id,
+ * whose result cannot be matched. `abandoned` is a turn that ended with the
+ * failure still unanswered.
+ *
+ * In the local corpus literal retries are almost absent (2 of 708), so the
+ * interesting number is not the retry rate but the recovery rate.
+ */
+export function emptyFollowups() {
+  return {
+    episodes: 0,
+    same: 0,
+    sameOk: 0,
+    sameFail: 0,
+    changedArgs: 0,
+    changedArgsOk: 0,
+    changedArgsFail: 0,
+    changedTool: 0,
+    changedToolOk: 0,
+    changedToolFail: 0,
+    unknown: 0,
+    abandoned: 0,
+  }
+}
+
+/** Times the action after a failure succeeded, across all three kinds. */
+export function recoveredFollowups(followups) {
+  const f = followups ?? {}
+  return (f.sameOk ?? 0) + (f.changedArgsOk ?? 0) + (f.changedToolOk ?? 0)
+}
+
+/** Times the action after a failure failed again. */
+export function failedFollowups(followups) {
+  const f = followups ?? {}
+  return (f.sameFail ?? 0) + (f.changedArgsFail ?? 0) + (f.changedToolFail ?? 0)
+}
+
 export function createSessionState(header = {}) {
   return {
     version: STATE_VERSION,
@@ -96,6 +142,15 @@ export function createSessionState(header = {}) {
     byKind: {},
     byClass: {},
     byTool: {},
+    /** tool -> { episodes, recovered }: a failure of this tool and how often the next call worked. */
+    byToolRecovery: {},
+    /** tool -> { [classId]: count }: which failure each tool actually produces. */
+    byToolClass: {},
+    followups: emptyFollowups(),
+    /** A failure waiting for the next step: { tool, signature, turn, step }. */
+    pendingFailure: null,
+    /** A same-turn follow-up waiting for its own result: { callId, kind, failedTool }. */
+    pendingRetry: null,
     turns: {},
     turnOrder: [],
     failedTurns: 0,
@@ -166,7 +221,10 @@ export function applyRecord(state, event) {
 function startTurn(state, data, at) {
   const turn = intOrNull(data.turn)
   if (turn === null) return state
-  const turns = { ...state.turns }
+  // A failure left hanging from an earlier turn had no follow-up call: the log
+  // may simply lack its turn/end, so close it here instead of dropping it.
+  const base = abandonFailure(state, state.pendingFailure?.turn ?? null)
+  const turns = { ...base.turns }
   if (turns[turn] === undefined) {
     turns[turn] = {
       turn,
@@ -180,17 +238,17 @@ function startTurn(state, data, at) {
       failed: false,
     }
   }
-  const turnOrder = state.turnOrder.includes(turn)
-    ? state.turnOrder
-    : [...state.turnOrder, turn].slice(-MAX_TURNS)
+  const turnOrder = base.turnOrder.includes(turn)
+    ? base.turnOrder
+    : [...base.turnOrder, turn].slice(-MAX_TURNS)
   return {
-    ...state,
+    ...base,
     currentTurn: turn,
     currentStep: null,
     openStep: null,
     turns,
     turnOrder,
-    updatedAt: at ?? state.updatedAt,
+    updatedAt: at ?? base.updatedAt,
   }
 }
 
@@ -240,11 +298,19 @@ function addAssistantMessage(state, data, at) {
 }
 
 function addToolCall(state, data, at) {
-  const withStep = ensureStep(state, data, at)
+  const opened = ensureStep(state, data, at)
   const name = typeof data.name === 'string' ? data.name : 'unknown'
   const callId = typeof data.callId === 'string' ? data.callId : null
   const signature = callSignature(name, data.arguments)
-  const previous = state.seenCalls[signature]
+  // Was this call the agent's answer to a failure it just saw?
+  const withStep = answerFailure(opened, {
+    name,
+    signature,
+    callId,
+    turn: opened.openStep.turn,
+    step: opened.openStep.step,
+  })
+  const previous = withStep.seenCalls[signature]
   const currentKey = withStep.openStep.turn !== null && withStep.openStep.step !== null
     ? `${withStep.openStep.turn}:${withStep.openStep.step}`
     : null
@@ -252,13 +318,13 @@ function addToolCall(state, data, at) {
   // file after an edit is legitimate work, not a loop.
   const duplicate = previous !== undefined
     && previous.where !== currentKey
-    && previous.mutations === state.mutationCount
+    && previous.mutations === withStep.mutationCount
 
-  let seenCalls = state.seenCalls
-  let seenCallCount = state.seenCallCount
+  let seenCalls = withStep.seenCalls
+  let seenCallCount = withStep.seenCallCount
   if (previous === undefined) {
     if (seenCallCount < MAX_SEEN_CALLS) {
-      seenCalls = { ...state.seenCalls, [signature]: { where: currentKey, mutations: state.mutationCount } }
+      seenCalls = { ...withStep.seenCalls, [signature]: { where: currentKey, mutations: withStep.mutationCount } }
       seenCallCount += 1
     }
   }
@@ -291,6 +357,104 @@ function addToolCall(state, data, at) {
     openStep: { ...withStep.openStep, calls: [...withStep.openStep.calls, call] },
     updatedAt: at ?? withStep.updatedAt,
   }
+}
+
+/**
+ * Settle one failure episode with the call that followed it.
+ *
+ * Rules, in order:
+ * - a turn change is not a recovery attempt (the user spoke again);
+ * - the same step is not a recovery attempt (parallel calls never saw the error);
+ * - same signature = the agent retried literally the same call;
+ * - same tool, other arguments = it tried to fix the input;
+ * - another tool = it changed approach.
+ *
+ * A settled episode is removed from `pendingFailure`; the retry is parked in
+ * `pendingRetry` until its own result says whether the retry worked.
+ */
+function answerFailure(state, call) {
+  const pending = state.pendingFailure ?? null
+  if (pending === null) return state
+  if (call.turn === null || call.step === null) return state
+  if (call.turn !== pending.turn) return state
+  if (call.step <= pending.step) return state
+
+  const sameSignature = pending.signature !== null && call.signature === pending.signature
+  const kind = sameSignature ? 'same' : call.name === pending.tool ? 'changedArgs' : 'changedTool'
+  const followups = { ...state.followups }
+  followups.episodes += 1
+  followups[kind] += 1
+  if (call.callId === null) followups.unknown += 1
+
+  const byToolRecovery = { ...(state.byToolRecovery ?? {}) }
+  const entry = byToolRecovery[pending.tool] ?? { episodes: 0, recovered: 0 }
+  byToolRecovery[pending.tool] = { ...entry, episodes: entry.episodes + 1 }
+
+  return {
+    ...state,
+    followups,
+    byToolRecovery,
+    pendingFailure: null,
+    pendingRetry: call.callId === null
+      ? null
+      : { callId: call.callId, kind, failedTool: pending.tool },
+  }
+}
+
+/** Close a failure episode whose turn ended without any follow-up call. */
+function abandonFailure(state, turn) {
+  const pending = state.pendingFailure ?? null
+  if (pending === null) return state
+  if (turn !== null && pending.turn !== turn) return state
+  const byToolRecovery = { ...(state.byToolRecovery ?? {}) }
+  const entry = byToolRecovery[pending.tool] ?? { episodes: 0, recovered: 0 }
+  byToolRecovery[pending.tool] = { ...entry, episodes: entry.episodes + 1 }
+  return {
+    ...state,
+    followups: {
+      ...state.followups,
+      episodes: state.followups.episodes + 1,
+      abandoned: state.followups.abandoned + 1,
+    },
+    byToolRecovery,
+    pendingFailure: null,
+    pendingRetry: null,
+  }
+}
+
+/**
+ * Settle a parked follow-up call with its own result, then let a fresh failure
+ * open the next episode.
+ */
+function settleRetry(state, info) {
+  let next = state
+  const pendingRetry = state.pendingRetry ?? null
+  if (pendingRetry !== null && info.callId !== null && pendingRetry.callId === info.callId) {
+    const followups = { ...next.followups }
+    const key = `${pendingRetry.kind}${info.failed ? 'Fail' : 'Ok'}`
+    followups[key] = (followups[key] ?? 0) + 1
+    let byToolRecovery = next.byToolRecovery ?? {}
+    if (!info.failed) {
+      const entry = byToolRecovery[pendingRetry.failedTool] ?? { episodes: 0, recovered: 0 }
+      byToolRecovery = {
+        ...byToolRecovery,
+        [pendingRetry.failedTool]: { ...entry, recovered: entry.recovered + 1 },
+      }
+    }
+    next = { ...next, followups, byToolRecovery, pendingRetry: null }
+  }
+  if (info.failed) {
+    next = {
+      ...next,
+      pendingFailure: {
+        tool: info.tool,
+        signature: info.signature ?? null,
+        turn: next.openStep?.turn ?? null,
+        step: next.openStep?.step ?? null,
+      },
+    }
+  }
+  return next
 }
 
 /** Flatten both tool-result shapes into plain text. */
@@ -349,12 +513,18 @@ function addToolResult(state, data, at) {
     errorClass: errorClass ?? calls[index].errorClass,
     snippet,
   }
+  const settled = settleRetry(withStep, {
+    callId,
+    tool: name,
+    signature: calls[index].signature,
+    failed,
+  })
   const mutated = !failed && WRITE_TOOLS.has(name)
   return {
-    ...withStep,
-    mutationCount: withStep.mutationCount + (mutated ? 1 : 0),
-    openStep: { ...withStep.openStep, calls },
-    updatedAt: at ?? withStep.updatedAt,
+    ...settled,
+    mutationCount: settled.mutationCount + (mutated ? 1 : 0),
+    openStep: { ...settled.openStep, calls },
+    updatedAt: at ?? settled.updatedAt,
   }
 }
 
@@ -487,8 +657,11 @@ function commitStep(state, info) {
   }
   const byClass = { ...state.byClass }
   const byTool = { ...state.byTool }
+  const byToolClass = { ...(state.byToolClass ?? {}) }
   for (const error of info.errors) {
     byClass[error.class] = (byClass[error.class] ?? 0) + 1
+    const classes = byToolClass[error.tool] ?? {}
+    byToolClass[error.tool] = { ...classes, [error.class]: (classes[error.class] ?? 0) + 1 }
   }
   for (const call of info.calls) {
     const entry = byTool[call.name] ?? { calls: 0, errors: 0 }
@@ -571,6 +744,7 @@ function commitStep(state, info) {
     byKind,
     byClass,
     byTool,
+    byToolClass,
     turns,
     recent,
     lastStep,
@@ -583,6 +757,8 @@ function endTurn(state, data, at) {
   const turn = intOrNull(data.turn) ?? state.currentTurn
   const reason = String(data.reason?.kind ?? 'unknown')
   let next = finalizeStep(state, at ?? Date.now())
+  // The turn ended while a failure was still waiting for a follow-up call.
+  next = abandonFailure(next, turn)
   const byTurnReason = { ...next.byTurnReason, [reason]: (next.byTurnReason[reason] ?? 0) + 1 }
   next = { ...next, byTurnReason, currentTurn: turn, updatedAt: at ?? next.updatedAt }
 
@@ -707,8 +883,23 @@ export function sessionView(state) {
       .map(([id, count]) => ({ id, label: classLabel(id), count }))
       .sort((a, b) => b.count - a.count),
     byTool: Object.entries(state.byTool)
-      .map(([tool, entry]) => ({ tool, calls: entry.calls ?? 0, errors: entry.errors ?? 0 }))
+      .map(([tool, entry]) => {
+        const recovery = (state.byToolRecovery ?? {})[tool] ?? { episodes: 0, recovered: 0 }
+        const classes = (state.byToolClass ?? {})[tool] ?? {}
+        const top = Object.entries(classes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]
+        return {
+          tool,
+          calls: entry.calls ?? 0,
+          errors: entry.errors ?? 0,
+          recoveryEpisodes: recovery.episodes ?? 0,
+          recovered: recovery.recovered ?? 0,
+          topClass: top === undefined ? null : { id: top[0], label: classLabel(top[0]), count: top[1] },
+        }
+      })
       .sort((a, b) => b.errors - a.errors || a.tool.localeCompare(b.tool)),
+    followups: state.followups ?? emptyFollowups(),
+    recovered: recoveredFollowups(state.followups ?? emptyFollowups()),
+    stillFailing: failedFollowups(state.followups ?? emptyFollowups()),
     byTurnReason: Object.entries(state.byTurnReason)
       .map(([reason, count]) => ({ reason, count }))
       .sort((a, b) => b.count - a.count),

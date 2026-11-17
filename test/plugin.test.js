@@ -178,7 +178,8 @@ test('stats route serves the cross-session snapshot', async () => {
     assert.equal(snapshot.days.length, 7)
     assert.ok(snapshot.kinds.length > 0)
     assert.ok(snapshot.tools.some(item => item.tool !== ''))
-    assert.equal(snapshot.sessions[0].sessionId, 'fixture-session')
+    assert.equal('sessions' in snapshot, false)
+    assert.equal(typeof snapshot.followups.episodes, 'number')
 
     const rejected = await callRoute(ctx.route, '/dsh-event-fix/stats', 'POST')
     assert.equal(rejected.status, 405)

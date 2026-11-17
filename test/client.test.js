@@ -131,3 +131,78 @@ test('settings page renders its shell before data arrives', () => {
   assert.match(joined, /无效动作统计/)
   assert.match(joined, /读取统计/)
 })
+
+test('follow-up reading names the dominant failure mode', () => {
+  const { module } = loadClientModule()
+  const deterministic = module.interpretFollowups({
+    episodes: 100, same: 40, sameOk: 5, sameFail: 35, changedArgs: 20,
+    changedArgsOk: 10, changedArgsFail: 10, changedTool: 20, changedToolOk: 15,
+    changedToolFail: 5, unknown: 0, abandoned: 0,
+  })
+  assert.match(deterministic, /原样重试占 40%/)
+  assert.match(deterministic, /确定的/)
+
+  const flailing = module.interpretFollowups({
+    episodes: 100, same: 2, sameOk: 1, sameFail: 1, changedArgs: 50,
+    changedArgsOk: 10, changedArgsFail: 40, changedTool: 40, changedToolOk: 10,
+    changedToolFail: 30, unknown: 0, abandoned: 8,
+  })
+  assert.match(flailing, /只有 23% 成功/)
+  assert.match(flailing, /试错/)
+
+  const handled = module.interpretFollowups({
+    episodes: 100, same: 2, sameOk: 2, sameFail: 0, changedArgs: 50,
+    changedArgsOk: 48, changedArgsFail: 2, changedTool: 40, changedToolOk: 38,
+    changedToolFail: 2, unknown: 0, abandoned: 8,
+  })
+  assert.match(handled, /接住/)
+
+  const givingUp = module.interpretFollowups({
+    episodes: 100, same: 0, sameOk: 0, sameFail: 0, changedArgs: 15,
+    changedArgsOk: 10, changedArgsFail: 5, changedTool: 20, changedToolOk: 18,
+    changedToolFail: 2, unknown: 0, abandoned: 65,
+  })
+  assert.match(givingUp, /放弃/)
+
+  assert.match(module.interpretFollowups({ episodes: 0 }), /还没有/)
+})
+
+test('the settings prompt carries the numbers it asks about', () => {
+  const { module } = loadClientModule()
+  const prompt = module.buildFollowupPrompt({
+    windowDays: 30,
+    totals: { steps: 1000, invalidSteps: 150, ratio: 15, wastedTokens: 5_000_000, wastedMs: 3_600_000 },
+    followups: {
+      episodes: 90, same: 2, sameOk: 1, sameFail: 1, changedArgs: 50,
+      changedArgsOk: 30, changedArgsFail: 20, changedTool: 25, changedToolOk: 20,
+      changedToolFail: 5, unknown: 0, abandoned: 13,
+    },
+    tools: [
+      {
+        tool: 'pwsh', calls: 100, errors: 14, rate: 14,
+        recoveryEpisodes: 12, recovered: 3,
+        topClass: { id: 'timeout', label: '超时', count: 9 },
+      },
+    ],
+  })
+  assert.match(prompt, /150 步无效（15\.0%）/)
+  assert.match(prompt, /下一步仍失败 26/)
+  assert.match(prompt, /恢复率 66%/)
+  assert.match(prompt, /做法与效果：/)
+  assert.match(prompt, /改参数再试 50 次，其中 60% 的下一步成功/)
+  assert.match(prompt, /换工具 25 次，其中 80% 的下一步成功/)
+  assert.match(prompt, /pwsh：14\/100 次失败（14\.0%）/)
+  assert.match(prompt, /主要是「超时」/)
+  assert.match(prompt, /失败后下一步成功 25%（3\/12）/)
+  assert.match(prompt, /不要泛泛而谈/)
+})
+
+test('the session prompt quotes the failing steps', () => {
+  const { module } = loadClientModule()
+  const view = sessionView(summarizeRecords(buildFixtureRecords(), { id: 'fixture-session' }))
+  const prompt = module.buildSessionPrompt(view)
+  assert.match(prompt, /复盘刚才这一轮/)
+  assert.match(prompt, /本会话：/)
+  assert.match(prompt, /T\d+S\d+ /)
+  assert.match(prompt, /下次具体怎么做/)
+})

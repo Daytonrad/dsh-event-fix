@@ -5,7 +5,7 @@
  * every chart is inline SVG so it can be opened from disk or attached to a PR.
  */
 import { STEP_KINDS, STEP_KIND_LABELS, classLabel } from './taxonomy.js'
-import { formatDuration, formatTokens, totalOf, turnReasonLabel } from './analyzer.js'
+import { formatDuration, formatTokens, emptyFollowups, totalOf, turnReasonLabel } from './analyzer.js'
 
 const DAY_MS = 86400000
 
@@ -44,6 +44,7 @@ export function buildReport(sessions, meta = {}) {
   const days = new Map()
   const recent = []
   const perSession = []
+  const followups = emptyFollowups()
 
   for (const session of sessions) {
     const view = session.view
@@ -63,8 +64,21 @@ export function buildReport(sessions, meta = {}) {
     for (const item of view.byKind) byKind.set(item.id, (byKind.get(item.id) ?? 0) + item.count)
     for (const item of view.byClass) byClass.set(item.id, (byClass.get(item.id) ?? 0) + item.count)
     for (const item of view.byTool) {
-      const entry = byTool.get(item.tool) ?? { calls: 0, errors: 0 }
-      byTool.set(item.tool, { calls: entry.calls + item.calls, errors: entry.errors + item.errors })
+      const entry = byTool.get(item.tool) ?? { calls: 0, errors: 0, recoveryEpisodes: 0, recovered: 0, classes: {} }
+      const classes = { ...entry.classes }
+      if (item.topClass !== null && item.topClass !== undefined) {
+        classes[item.topClass.id] = (classes[item.topClass.id] ?? 0) + item.topClass.count
+      }
+      byTool.set(item.tool, {
+        calls: entry.calls + item.calls,
+        errors: entry.errors + item.errors,
+        recoveryEpisodes: entry.recoveryEpisodes + (item.recoveryEpisodes ?? 0),
+        recovered: entry.recovered + (item.recovered ?? 0),
+        classes,
+      })
+    }
+    if (view.followups !== undefined) {
+      for (const key of Object.keys(followups)) followups[key] += view.followups[key] ?? 0
     }
     for (const item of view.byTurnReason) {
       byTurnReason.set(item.reason, (byTurnReason.get(item.reason) ?? 0) + item.count)
@@ -129,8 +143,19 @@ export function buildReport(sessions, meta = {}) {
       .map(([id, count]) => ({ id, label: classLabel(id), count }))
       .sort((a, b) => b.count - a.count),
     byTool: [...byTool.entries()]
-      .map(([tool, entry]) => ({ tool, ...entry }))
+      .map(([tool, entry]) => {
+        const top = Object.entries(entry.classes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]
+        return {
+          tool,
+          calls: entry.calls,
+          errors: entry.errors,
+          recoveryEpisodes: entry.recoveryEpisodes,
+          recovered: entry.recovered,
+          topClass: top === undefined ? null : { id: top[0], label: classLabel(top[0]), count: top[1] },
+        }
+      })
       .sort((a, b) => b.errors - a.errors || b.calls - a.calls),
+    followups,
     byTurnReason: [...byTurnReason.entries()]
       .map(([reason, count]) => ({ reason, label: turnReasonLabel(reason), count }))
       .sort((a, b) => b.count - a.count),

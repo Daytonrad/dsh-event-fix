@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { sessionView, summarizeRecords } from '../src/analyzer.js'
-import { buildSnapshot, fillDays, shortenPath } from '../src/snapshot.js'
+import { buildSnapshot, fillDays } from '../src/snapshot.js'
 import { buildFixtureRecords } from './fixtures.js'
 
 const view = sessionView(summarizeRecords(buildFixtureRecords(), { id: 'fixture-session', cwd: 'E:\\programs\\demo' }))
@@ -30,8 +30,21 @@ test('snapshot mirrors the report totals for one session', () => {
   assert.equal(snapshot.totals.wastedTokens, view.totals.wastedTokens)
   assert.equal(snapshot.days.length, 3)
   assert.equal(snapshot.tools[0].rate >= 0, true)
-  assert.equal(snapshot.sessions[0].cwd, '…/programs/demo')
   assert.ok(snapshot.kinds.length > 0)
+  // The page no longer shows a per-session table, so the payload must not carry one.
+  assert.equal('sessions' in snapshot, false)
+})
+
+test('snapshot carries the failure-follow-up counters', () => {
+  const snapshot = buildSnapshot([{ sessionId: 'fixture-session', cwd: 'E:\\programs\\demo', view }], {
+    now: Date.parse('2026-11-10T03:00:00Z'),
+    windowDays: 3,
+  })
+  assert.equal(typeof snapshot.followups.episodes, 'number')
+  assert.ok(snapshot.followups.episodes >= 0)
+  const total = snapshot.followups.same + snapshot.followups.changedArgs
+    + snapshot.followups.changedTool + snapshot.followups.abandoned
+  assert.equal(total, snapshot.followups.episodes)
 })
 
 test('loading state is carried through to the page', () => {
@@ -39,10 +52,4 @@ test('loading state is carried through to the page', () => {
   assert.equal(snapshot.state, 'loading')
   assert.equal(snapshot.totals.steps, 0)
   assert.equal(snapshot.totals.ratio, 0)
-})
-
-test('shortenPath keeps the last two segments', () => {
-  assert.equal(shortenPath('E:\\programs\\dsh-event-fix'), '…/programs/dsh-event-fix')
-  assert.equal(shortenPath('E:\\a'), 'E:\\a')
-  assert.equal(shortenPath(''), '')
 })

@@ -8,6 +8,7 @@
  */
 import { buildReport } from './report.js'
 import { dayKey } from './report.js'
+import { failedFollowups, recoveredFollowups } from './analyzer.js'
 
 const DAY_MS = 86400000
 
@@ -51,15 +52,13 @@ export function buildSnapshot(sessions, options = {}) {
       calls: item.calls,
       errors: item.errors,
       rate: item.calls > 0 ? Math.round((item.errors / item.calls) * 1000) / 10 : 0,
+      recoveryEpisodes: item.recoveryEpisodes ?? 0,
+      recovered: item.recovered ?? 0,
+      topClass: item.topClass ?? null,
     })),
-    sessions: report.perSession.slice(0, 8).map(item => ({
-      sessionId: item.sessionId,
-      cwd: shortenPath(item.cwd),
-      steps: item.steps,
-      invalidSteps: item.invalidSteps,
-      ratio: item.ratio,
-      wastedTokens: item.wastedTokens,
-    })),
+    followups: report.followups,
+    recovered: recoveredFollowups(report.followups),
+    stillFailing: failedFollowups(report.followups),
   }
 }
 
@@ -79,11 +78,4 @@ export function fillDays(series, now, windowDays) {
     })
   }
   return out
-}
-
-export function shortenPath(value) {
-  const text = String(value ?? '')
-  if (text === '') return ''
-  const parts = text.split(/[\\/]+/u).filter(Boolean)
-  return parts.length <= 2 ? text : `…/${parts.slice(-2).join('/')}`
 }
