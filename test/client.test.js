@@ -50,41 +50,51 @@ function loadClientModule() {
   return { module, style }
 }
 
-test('client module registers one composer dock slot', () => {
+function registerSlots(module) {
+  const registered = []
+  module.apply({
+    slots: {
+      inject(name, factory) {
+        const entry = { slot: name, definition: null, component: null }
+        registered.push(entry)
+        entry.dispose = factory()
+      },
+      register(definition, component) {
+        const entry = registered[registered.length - 1]
+        entry.definition = definition
+        entry.component = component
+        return () => {}
+      },
+    },
+  })
+  return registered
+}
+
+function slotComponent(module, id) {
+  const entry = registerSlots(module).find(item => item.definition?.id === id)
+  assert.ok(entry !== undefined, `slot ${id} was registered`)
+  return entry.component
+}
+
+test('client module registers the composer pill and the settings page', () => {
   const { module, style } = loadClientModule()
   assert.equal(module.name, 'event-fix-client')
   assert.deepEqual([...module.inject], ['slots'])
 
-  const registered = []
-  const ctx = {
-    slots: {
-      inject(name, factory) {
-        assert.equal(name, 'conversation.composer.dock')
-        factory()
-      },
-      register(definition, component) {
-        registered.push({ definition, component })
-      },
-    },
-  }
-  module.apply(ctx)
+  const registered = registerSlots(module)
   assert.match(style.textContent, /data-event-fix-pill/)
-  assert.equal(registered.length, 1)
+  assert.match(style.textContent, /data-event-fix-page/)
+  assert.equal(registered.length, 2)
+  assert.deepEqual(registered.map(item => item.slot), ['conversation.composer.dock', 'settings.section'])
   assert.equal(registered[0].definition.id, 'event-fix-steps')
-  assert.equal(typeof registered[0].component, 'function')
+  assert.equal(registered[1].definition.id, 'event-fix-stats')
+  assert.equal(registered[1].definition.order, 40)
+  assert.equal(typeof registered[1].component, 'function')
 })
 
 test('pill renders a summary string from the projection view', () => {
   const { module } = loadClientModule()
-  let component = null
-  module.apply({
-    slots: {
-      inject: (name, factory) => factory(),
-      register: (definition, registered) => {
-        component = registered
-      },
-    },
-  })
+  const component = slotComponent(module, 'event-fix-steps')
   const view = sessionView(summarizeRecords(buildFixtureRecords(), { id: 'fixture-session' }))
   const element = component({ useProjection: () => view })
   assert.equal(element.type, 'span')
@@ -98,16 +108,26 @@ test('pill renders a summary string from the projection view', () => {
 
 test('pill renders nothing before the first step', () => {
   const { module } = loadClientModule()
-  let component = null
-  module.apply({
-    slots: {
-      inject: (name, factory) => factory(),
-      register: (definition, registered) => {
-        component = registered
-      },
-    },
-  })
+  const component = slotComponent(module, 'event-fix-steps')
   assert.equal(component({ useProjection: () => undefined }), null)
   const empty = sessionView(summarizeRecords([], { id: 's' }))
   assert.equal(component({ useProjection: () => empty }), null)
+})
+
+test('settings page renders its shell before data arrives', () => {
+  const { module } = loadClientModule()
+  const page = slotComponent(module, 'event-fix-stats')
+  const element = page({})
+  assert.equal(element.props['data-event-fix-page'], true)
+  const texts = []
+  const walk = node => {
+    if (node === null || node === undefined) return
+    if (typeof node === 'string') { texts.push(node); return }
+    if (typeof node === 'number') { texts.push(String(node)); return }
+    for (const child of node.children ?? []) walk(child)
+  }
+  walk(element)
+  const joined = texts.join(' | ')
+  assert.match(joined, /无效动作统计/)
+  assert.match(joined, /读取统计/)
 })

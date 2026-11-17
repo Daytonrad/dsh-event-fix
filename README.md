@@ -69,9 +69,31 @@ Top 工具：web_fetch 625/3713（16.8%）· pwsh 571/3776（15.1%）· subagent
   只看 `isError` 会让 pwsh 的失败率从 15.1% 掉到 1.5%。
 - **时长浪费比例（18.6%）高于 token 比例（12.2%）**：无效步主要烧在工具等待上，不烧 token 但烧时间。
 
-## 三种用法
+## 四种用法
 
-### 1. CLI：一次性扫描全部会话
+### 1. 设置页：跨会话汇总（推荐入口）
+
+DSH → 设置 → 左侧导航「无效动作统计」。页面自己拉 `GET /dsh-event-fix/stats`，
+不用开会话、不用敲命令：
+
+![设置页](docs/settings-page.png)
+
+页内包含：KPI（无效步 / 浪费 token / 浪费时长 / 失败调用）、近 30 天「每日无效占比 + 浪费 token」趋势、
+无效类型与报错分类排行、失败率最高的工具、浪费 token 最多的会话。右上角「重新扫描」会重放日志补全历史。
+
+### 2. 会话内胶囊：单个会话实时看
+
+输入框下方出现胶囊：`无效 2/9 · 12.3k tok`。点开是当前会话的分项面板：
+KPI、每轮无效占比折线、无效类型、报错分类、最近无效步。
+
+### 3. 命令：`/steps`
+
+```text
+/steps        文本摘要（与 CLI 同口径）
+/steps json   当前会话的完整视图 JSON
+```
+
+### 4. CLI：一次性扫描全部会话
 
 ```powershell
 # 摘要（默认读 $DSH_HOME/sessions）
@@ -86,30 +108,19 @@ node bin/dsh-event-fix.mjs scan --json .\reports\report.json --quiet
 
 参数：`--root <dir>`、`--since 7d|24h|2026-11-01`、`--session <id>`、`--limit <n>`、`--html`、`--json`。
 
-### 2. DSH 面板：会话内实时看
-
-安装后在输入框下方出现一个胶囊：`无效 2/9 · 12.3k tok`。
-点开是当前会话的分项面板：KPI、每轮无效占比折线、无效类型、报错分类、最近无效步。
-
-### 3. 命令：`/steps`
-
-```text
-/steps        文本摘要（与 CLI 同口径）
-/steps json   当前会话的完整视图 JSON
-```
-
 ## 架构
 
-```mermaid
-flowchart LR
-  A["session events<br/>step/start · tool/result · llm/retry · turn/end"] --> B["step 投影<br/>src/analyzer.js"]
-  B --> C["per-step facts<br/>kinds + usage + duration"]
-  C --> D["会话视图 view"]
-  C --> E["step ledger<br/>data/step-ledger.jsonl（可选）"]
-  D --> F["DSH 面板<br/>无效 2/9 · 12.3k tok"]
-  D --> G["/steps 命令"]
-  E --> H["CLI 聚合<br/>bin/dsh-event-fix.mjs"]
-  H --> I["离线 HTML 面板"]
+```text
+session events            step 投影              per-step facts
+step/start · tool/result  ──────────▶  analyzer  ──────────▶  kinds + usage + duration
+llm/retry · turn/end                                  │
+                                                      ├──▶ 会话视图 view
+                                                      │      ├──▶ 会话内胶囊（conversation.composer.dock）
+                                                      │      ├──▶ /steps 命令
+                                                      │      └──▶ 跨会话聚合 → GET /dsh-event-fix/stats
+                                                      │                          └──▶ 设置页
+                                                      └──▶ step ledger（data/step-ledger.jsonl，可选）
+                                                              └──▶ CLI 聚合 → 离线 HTML 面板
 ```
 
 这条分支只依赖事件，不依赖 DSH 内部状态：同一份会话日志用 CLI 重放，得到的数字必须和面板一致
