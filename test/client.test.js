@@ -192,6 +192,36 @@ test('settings page renders every card once a snapshot arrives', () => {
   assert.match(joined, /浪费 token/)
 })
 
+test('settings page says "old host" instead of "no failures" when the field is missing', () => {
+  // A host that predates the followup projection returns no `followups` key.
+  // Claiming "no failures yet" here sends people hunting for data that exists.
+  const stale = {
+    state: 'ready',
+    generatedAt: '2026-11-17T20:00:00.000Z',
+    windowDays: 30,
+    totals: { steps: 5782, invalidSteps: 866, ratio: 15, wastedTokens: 78620000, wastedMs: 91620000, toolErrors: 526 },
+    days: [],
+    kinds: [],
+    classes: [],
+    tools: [{ tool: 'pwsh', calls: 2902, errors: 414, rate: 14.3 }],
+  }
+  const { module } = loadClientModule([stale])
+  const page = slotComponent(module, 'event-fix-stats')
+  const texts = []
+  const walk = node => {
+    if (node === null || node === undefined || node === false) return
+    if (typeof node === 'string') { texts.push(node); return }
+    if (typeof node === 'number') { texts.push(String(node)); return }
+    if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+    for (const child of node.children ?? []) walk(child)
+  }
+  walk(page({}))
+  const joined = texts.join(' | ')
+  assert.match(joined, /重启一次 DSH/)
+  assert.match(joined, /旧版本/)
+  assert.doesNotMatch(joined, /还没有可判定的失败/)
+})
+
 test('follow-up reading names the dominant failure mode', () => {
   const { module } = loadClientModule()
   const deterministic = module.interpretFollowups({

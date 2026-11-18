@@ -79,6 +79,7 @@ window.__ModuleLoader__.load({
 [data-event-fix-page] .efp-num{font-variant-numeric:tabular-nums}
 [data-event-fix-page] .efp-path{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}
 [data-event-fix-page] .efp-note{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:14px}
+[data-event-fix-page] .efp-stale{margin:0 0 14px;padding:9px 12px;border-radius:8px;border:.5px solid rgba(180,95,6,.35);background:rgba(250,222,100,.14);color:#8a5a00;font-size:12px;line-height:1.55}
 [data-event-fix-page] .efp-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;padding:8px 0}
 [data-event-fix-page] .efp-stack{display:flex;height:10px;border-radius:5px;overflow:hidden;gap:1px;margin:4px 0 10px}
 [data-event-fix-page] .efp-stack-seg{display:block;height:100%;min-width:2px}
@@ -754,6 +755,13 @@ window.__ModuleLoader__.load({
     }
 
     function FollowupCard({ followups, onPrompt, promptLabel, promptHint }) {
+      // `undefined` means the host response predates this field, which is a
+      // different problem from "there were no episodes". Saying the latter when
+      // the former is true sends people looking for failures that are right there.
+      if (followups === undefined || followups === null) {
+        return h('div', { className: 'efp-empty' },
+          '宿主侧还是旧版本：响应里没有 followups 字段。重启一次 DSH 后本卡片与「失败后下一步」列才会出现。')
+      }
       const segments = followupSegments(followups)
       const episodes = followups?.episodes ?? 0
       if (episodes === 0) {
@@ -859,6 +867,9 @@ window.__ModuleLoader__.load({
       const scan = data?.scan ?? {}
       const loading = data === null
       const scanning = scan.state === 'loading'
+      // A field we know the current host emits. Its absence means the running
+      // host module predates it, so the numeric cards are stale rather than empty.
+      const staleHost = !loading && data.followups === undefined && data.state !== 'error'
       const updated = data?.generatedAt
         ? new Date(data.generatedAt).toLocaleTimeString('zh-CN', { hour12: false })
         : '—'
@@ -877,6 +888,12 @@ window.__ModuleLoader__.load({
             disabled: busy,
           }, busy ? '扫描中…' : '重新扫描'),
         ),
+
+        staleHost
+          ? h('div', { className: 'efp-stale' },
+              '当前响应来自旧版宿主模块（没有 followups 字段）：插件源码改动不会热加载，'
+              + '重启一次 DSH 后「失败之后」与「失败后下一步」两处才会有数据。')
+          : null,
 
         scanning
           ? h('div', { className: 'efp-strip' },
@@ -930,7 +947,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'efp-card-sub' },
                   '以一次失败为起点，看同一轮里下一步的回应：原样重试、改参数、换工具，还是直接放弃'),
                 h(FollowupCard, {
-                  followups: data.followups ?? {},
+                  followups: data.followups,
                   onPrompt: () => { void copyPrompt(buildFollowupPrompt(data)) },
                   promptLabel: copied ? '已复制，粘到输入框即可' : '复制排查 prompt',
                   promptHint: '不调用模型：只是把这个问题的快照准备好',
