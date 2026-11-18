@@ -258,6 +258,46 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 dsh web --no-open
 ```
 
+### 改完源码怎么重启（重要）
+
+**宿主侧的改动永远需要重启，这是 HMR 的边界，不是插件的缺陷。** 三条路径的缓存行为不一样：
+
+| 改了什么 | 需要做什么 |
+|---|---|
+| 装一个新的 bundle（`dsh plugin add`） | 什么都不用做，HMR 会热加载 |
+| 改已装插件的 **client** 半（`src/client.js`） | 刷新浏览器即可——它每次请求都从磁盘读 |
+| 改已装插件的 **host** 半（`src/analyzer.js`、`snapshot.js`、`index.js`） | **必须重启 DSH** |
+
+原因：HMR 的 `chokidar` 默认忽略 `**/node_modules`，而 `link:` 安装的包在 `node_modules` 下、
+真实源码在仓库目录，所以监听不到；同时宿主模块在进程启动时就已载入内存。
+
+这种错配的表现很迷惑：页面是新的（标题、卡片都在），数据是旧的（新字段读不到）。
+页面现在会自检——响应里缺一个当前版本必有的字段时，顶部显示「当前响应来自旧版宿主模块」，
+而不是把版本问题说成「没有数据」。
+
+一条命令完成重启（会先杀掉占用端口的旧进程）：
+
+```powershell
+E:\programs\dsh-event-fix\install\restart-dsh.cmd
+```
+
+它会清掉代理变量（残留会让模型请求变成 `Connection error`）、用便携 Node 启动、
+并把输出追加到 `.scratch/dsh-restart.out.log`。**日志最后一行是带 token 的访问地址，
+每次重启 token 都会变，所以旧标签页会 401，要用新地址打开一次。**
+
+想从任意目录、且不占一个终端窗口，可以注册成计划任务（脱离调用者的进程树）：
+
+```powershell
+Register-ScheduledTask -TaskName 'wb-dsh-web' `
+  -Action (New-ScheduledTaskAction -Execute 'E:\programs\dsh-event-fix\install\restart-dsh.cmd') `
+  -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddYears(1)) `
+  -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)) -Force
+Start-ScheduledTask -TaskName 'wb-dsh-web'
+```
+
+`Start-Process` 起 `cmd.exe` 可能被本机安全策略拦（“bypasses PowerShell command validation”），
+计划任务不受此限制。
+
 ### 配置
 
 包内 `cordis.patch.yml` 的可移植默认值：
