@@ -330,6 +330,8 @@ Start-ScheduledTask -TaskName 'wb-dsh-web'
 - **子会话单独统计**。subagent 会话是独立 session 文件，不在父会话里合并。
 - **轮次中断只归因一步**。该轮最后一步背锅，不拆分「哪部分是被中断浪费的」。
 - **zstd 需要 Node ≥ 22.15 / 24**。DSH 自带运行时满足；用系统 Node 跑 CLI 时注意版本。
+- **设置页路由遵守 DSH 访问检查**：`GET /dsh-event-fix/stats` 先调用宿主的
+  `ctx.connection.requestRejection(req)`；浏览器中的其他网页或未通过宿主会话检查的请求会直接得到 401/403。
 - 当前实测 DSH `0.2.0-rc.2`（web profile）；事件字段变化时需要同步更新 `src/analyzer.js`。
 
 ## 开发

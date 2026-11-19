@@ -27,7 +27,7 @@ import { listSessionFiles, readSessionRecords, resolveSessionsRoot } from './ses
 import { buildSnapshot } from './snapshot.js'
 
 export const name = 'event-fix'
-export const inject = ['commands', 'sessionProjections']
+export const inject = ['commands', 'sessionProjections', 'connection']
 
 const DEFAULT_LEDGER_PATH = fileURLToPath(new URL('../data/step-ledger.jsonl', import.meta.url))
 const STATS_PATH = '/dsh-event-fix/stats'
@@ -298,6 +298,7 @@ export function apply(ctx, config = {}) {
 
   function serveStats(request, response) {
     try {
+      if (rejectUnadmitted(request, response)) return
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         response.writeHead(405, { 'content-type': 'text/plain; charset=utf-8', allow: 'GET, HEAD' })
         response.end('method not allowed')
@@ -323,6 +324,24 @@ export function apply(ctx, config = {}) {
       }
       response.end(JSON.stringify({ error: messageOf(error) }))
     }
+  }
+
+  /**
+   * Exact web-server routes bypass the host's API middleware, so they must ask
+   * the Connection service's own Host/Origin and browser-session fence first.
+   * Older hosts without the service keep the route available.
+   */
+  function rejectUnadmitted(request, response) {
+    const connection = ctx.connection ?? ctx.get?.('connection')
+    if (typeof connection?.requestRejection !== 'function') return false
+    const rejection = connection.requestRejection(request)
+    if (rejection === undefined) return false
+    response.writeHead(rejection, {
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-store',
+    })
+    response.end()
+    return true
   }
 }
 

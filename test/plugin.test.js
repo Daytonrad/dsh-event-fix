@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { apply, name, resolveConfig } from '../src/index.js'
+import { apply, inject, name, resolveConfig } from '../src/index.js'
 import { PROJECTION_KEY, sessionView } from '../src/analyzer.js'
 import { buildFixtureRecords } from './fixtures.js'
 
@@ -40,6 +40,11 @@ function createFakeCtx() {
         ctx.command = definition
       },
     },
+    connection: {
+      requestRejection() {
+        return undefined
+      },
+    },
   }
   return ctx
 }
@@ -56,7 +61,7 @@ function attachWebServer(ctx) {
   return ctx
 }
 
-function callRoute(route, url, method = 'GET') {
+function callRoute(route, url, method = 'GET', requestExtra = {}) {
   return new Promise(resolve => {
     const chunks = []
     const response = {
@@ -73,7 +78,7 @@ function callRoute(route, url, method = 'GET') {
         resolve({ status: this.status, headers: this.headers, body: chunks.join('') })
       },
     }
-    route.handler({ method, url }, response)
+    route.handler({ method, url, ...requestExtra }, response)
   })
 }
 
@@ -81,6 +86,7 @@ test('host plugin registers projection and command', () => {
   const ctx = createFakeCtx()
   apply(ctx, { ledgerEnabled: false })
   assert.equal(name, 'event-fix')
+  assert.ok(inject.includes('connection'))
   assert.equal(ctx.projection.key, PROJECTION_KEY)
   assert.equal(ctx.command.name, 'steps')
   assert.equal(ctx.listeners.filter(item => item.event === 'session/event').length, 1)
@@ -183,6 +189,32 @@ test('stats route serves the cross-session snapshot', async () => {
 
     const rejected = await callRoute(ctx.route, '/dsh-event-fix/stats', 'POST')
     assert.equal(rejected.status, 405)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('stats route asks the host connection gate before serving', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-event-fix-gate-'))
+  try {
+    const ctx = attachWebServer(createFakeCtx())
+    ctx.connection = {
+      requestRejection(request) {
+        return request.headers?.['x-untrusted'] === '1' ? 403 : undefined
+      },
+    }
+    apply(ctx, { ledgerEnabled: false, sessionsRoot: dir, historySessions: 1 })
+
+    const denied = await callRoute(ctx.route, '/dsh-event-fix/stats', 'GET', {
+      headers: { 'x-untrusted': '1' },
+    })
+    assert.equal(denied.status, 403)
+    assert.equal(denied.body, '')
+
+    const admitted = await callRoute(ctx.route, '/dsh-event-fix/stats', 'GET', {
+      headers: { 'x-untrusted': '0' },
+    })
+    assert.equal(admitted.status, 200)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
