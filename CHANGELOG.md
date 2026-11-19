@@ -202,3 +202,11 @@
 
 只解释明确事件；重复调用是启发式；token 含缓存且不区分单价；并行工具会让步时长重叠；
 subagent 会话独立统计；需要 Node ≥ 22.15（zstd）。
+
+## 0.3.2 (2026-11-19)
+
+- Add a normal npm install path for consumers.
+- Include tests, syntax-check tooling, and the screenshot manifest in the published package so its declared commands are self-contained.
+- Add a package lock so a clean npm ci can run reproducibly.
+- Publish the first npm-installable release.
+

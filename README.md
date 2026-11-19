@@ -225,7 +225,14 @@ Copy-Item E:\programs\dsh-event-fix\install\dsh.cmd "$env:USERPROFILE\.local\bin
 
 **C. 跑 CLI 命令用绝对路径**，不装插件，只出离线面板（见上文「CLI」）。
 
-### 本地开发链接（推荐）
+### 从 npm 安装
+
+```powershell
+dsh plugin --profile web add dsh-event-fix@0.3.2
+```
+
+这是普通用户推荐路径。安装后重启 DSH web，日志出现 `[event-fix] active` 即生效。
+### 本地开发链接
 
 ```powershell
 dsh plugin --profile web add link:E:/programs/dsh-event-fix
@@ -356,3 +363,4 @@ npm run scan -- --limit 5 --html .\reports\preview.html
 ## License
 
 [MIT](LICENSE) © 2026 dsh-event-fix contributors
+
