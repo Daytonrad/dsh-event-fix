@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### 修复
+
+- `decompressAll` 现在按 zstd 帧边界逐帧解压，不再依赖 Node zstd 对“连续多帧”的平台特定行为。
+  Node 24 / Linux 会一次解压相邻帧，Node 22 / Windows 只解压第一帧；旧实现因此在不同平台得到不同结果。
+  设置页在 Node 24 / Linux 上可能漏读或重复读取会话日志的问题已修复。
+
 ## 0.3.1 — 2026-11-19
 
 **修复设置页 HTTP 路由的访问边界。** 精确注册在 `webServer` 上的路由不会自动经过 DSH 的 API 中间件；

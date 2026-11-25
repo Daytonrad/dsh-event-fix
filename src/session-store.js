@@ -12,6 +12,7 @@ import { basename, join } from 'node:path'
 import zlib from 'node:zlib'
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+const ZSTD_MAGIC_NUMBER = 0xfd2fb528
 
 export function resolveSessionsRoot(explicit) {
   if (typeof explicit === 'string' && explicit.trim() !== '') return explicit
@@ -120,12 +121,15 @@ export function decompressAll(buffer) {
   for (;;) {
     const at = buffer.indexOf(ZSTD_MAGIC, offset)
     if (at < 0) break
-    offset = at + 4
+    let end
     try {
-      texts.push(zlib.zstdDecompressSync(buffer.subarray(at)).toString('utf8'))
+      end = findZstdFrameEnd(buffer, at)
+      texts.push(zlib.zstdDecompressSync(buffer.subarray(at, end)).toString('utf8'))
     } catch {
       // Truncated or corrupt frame: skip it and keep scanning.
+      end = at + 4
     }
+    offset = end
   }
   if (texts.length === 0) {
     try {
@@ -135,6 +139,54 @@ export function decompressAll(buffer) {
     }
   }
   return texts
+}
+
+/**
+ * Find the end of one zstd frame without relying on the decompressor's
+ * concatenated-frame behavior. Node's zstd implementation differs by platform
+ * and version: some builds stop after the first frame, while others consume all
+ * adjacent frames at once.
+ *
+ * The block walk follows the public frame format. It is intentionally strict:
+ * a malformed or truncated frame is skipped by the caller instead of being fed
+ * to the decompressor as a larger suffix.
+ */
+function findZstdFrameEnd(buffer, start) {
+  if (start + 5 > buffer.length) throw new Error('truncated zstd frame header')
+  if (buffer.readUInt32LE(start) !== ZSTD_MAGIC_NUMBER) throw new Error('bad zstd magic')
+
+  let pos = start + 4
+  const descriptor = buffer[pos]
+  pos += 1
+
+  const fcsFlag = (descriptor >> 6) & 0b11
+  const singleSegment = ((descriptor >> 5) & 0b1) === 1
+  const hasChecksum = ((descriptor >> 2) & 0b1) === 1
+  const dictIdFlag = descriptor & 0b11
+
+  if (!singleSegment) pos += 1
+  pos += [0, 1, 2, 4][dictIdFlag]
+  const fcsSize = fcsFlag === 0 ? (singleSegment ? 1 : 0) : [0, 2, 4, 8][fcsFlag]
+  pos += fcsSize
+
+  for (;;) {
+    if (pos + 3 > buffer.length) throw new Error('truncated zstd block header')
+    const blockHeader = buffer.readUIntLE(pos, 3)
+    pos += 3
+    const lastBlock = (blockHeader & 0b1) === 1
+    const blockType = (blockHeader >> 1) & 0b11
+    const blockSize = blockHeader >> 3
+    if (blockType === 0b11) throw new Error('reserved zstd block type')
+
+    pos += blockType === 0b01 ? 1 : blockSize
+    if (pos > buffer.length) throw new Error('truncated zstd block')
+    if (lastBlock) break
+  }
+  if (hasChecksum) {
+    pos += 4
+    if (pos > buffer.length) throw new Error('truncated zstd checksum')
+  }
+  return pos
 }
 
 /** Optional ISO cutoff parser: `7d`, `24h`, `2026-11-01`. */
