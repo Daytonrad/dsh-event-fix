@@ -33,6 +33,9 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "README.en.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "test",
     "scripts",
     "screenshots.json"

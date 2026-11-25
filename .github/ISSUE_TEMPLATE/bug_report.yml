@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible problem in the plugin, CLI, or settings page.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove API keys, local session content, and machine-specific paths before posting logs.
+  - type: input
+    id: version
+    attributes:
+      label: dsh-event-fix version
+      placeholder: "0.3.2"
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      placeholder: "0.2.0-rc.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does the problem appear?
+      options:
+        - Settings page
+        - Composer pill
+        - /steps command
+        - CLI scan
+        - Offline HTML report
+        - Installation / loading
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest event or command sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include sanitized logs or screenshots if relevant.
+    validations:
+      required: true

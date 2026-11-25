@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Read the quick start first
+    url: https://github.com/SSHOOTING/dsh-event-fix/blob/main/docs/QUICKSTART.md
+    about: Installation, first run, and troubleshooting steps.

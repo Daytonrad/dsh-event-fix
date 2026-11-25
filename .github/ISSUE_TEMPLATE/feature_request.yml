@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a new analysis, integration, or usability improvement.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A useful metric should lead to a concrete action. Please explain what the user would do differently after seeing the result.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What decision or action is currently hard?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed signal or interaction
+      description: Describe the event source, output, and the next action it enables.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: scope
+    attributes:
+      label: Compatibility and privacy considerations
+      description: Mention any new event fields, file writes, network access, or DSH version constraints.

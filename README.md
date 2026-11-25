@@ -1,5 +1,14 @@
 # dsh-event-fix
 
+<p>
+  <a href="README.en.md">English</a> | 中文
+</p>
+
+[![CI](https://github.com/SSHOOTING/dsh-event-fix/actions/workflows/ci.yml/badge.svg)](https://github.com/SSHOOTING/dsh-event-fix/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/dsh-event-fix.svg)](https://www.npmjs.com/package/dsh-event-fix)
+[![license](https://img.shields.io/github/license/SSHOOTING/dsh-event-fix.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/SSHOOTING/dsh-event-fix?style=social)](https://github.com/SSHOOTING/dsh-event-fix/stargazers)
+
 > **DSH 会话日志的 step 级错误统计与浪费核算。**
 >
 > 它不改请求、不改工具、不调模型；只读取事件流，回答「哪些 step 白干了、白花了多少 token 和时间」。
@@ -9,6 +18,17 @@
 不做意图判断，也不假装能评价「这次回答好不好」。
 
 ![面板示例](docs/dashboard-demo.png)
+
+## 30 秒安装
+
+```powershell
+dsh plugin --profile web add dsh-event-fix@0.3.2
+```
+
+重启 DSH web，打开 **设置 → 无效动作统计**。完整步骤见 [五分钟快速开始](docs/QUICKSTART.md)。
+
+如果你正在评估它是否值得装：先看上面的面板截图，再看下面的「四个问题」和「真实数据样例」。
+这个插件不修改会话、不调用模型，统计口径和失败回合的判定规则都写在文档里，便于反驳和复核。
 
 ## 四个问题
 
@@ -292,18 +312,23 @@ E:\programs\dsh-event-fix\install\restart-dsh.cmd
 并把输出追加到 `.scratch/dsh-restart.out.log`。**日志最后一行是带 token 的访问地址，
 每次重启 token 都会变，所以旧标签页会 401，要用新地址打开一次。**
 
-想从任意目录、且不占一个终端窗口，可以注册成计划任务（脱离调用者的进程树）：
+想从任意目录、且不占一个终端窗口，可以注册成计划任务（脱离调用者的进程树）。
+计划任务应通过无窗口启动器调用 `.cmd`，不要把 `.cmd` 直接作为 `Exec` 动作；
+后者每次触发都会创建一个可见的 `cmd.exe` 控制台窗口。
 
 ```powershell
-Register-ScheduledTask -TaskName 'wb-dsh-web' `
-  -Action (New-ScheduledTaskAction -Execute 'E:\programs\dsh-event-fix\install\restart-dsh.cmd') `
+Register-ScheduledTask -TaskName 'wb-dsh-restart' `
+  -Action (New-ScheduledTaskAction `
+    -Execute "$env:SystemRoot\System32\wscript.exe" `
+    -Argument '//B //NoLogo "E:\programs\dsh-event-fix\install\restart-dsh-hidden.vbs"') `
   -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddYears(1)) `
   -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)) -Force
-Start-ScheduledTask -TaskName 'wb-dsh-web'
+Start-ScheduledTask -TaskName 'wb-dsh-restart'
 ```
 
-`Start-Process` 起 `cmd.exe` 可能被本机安全策略拦（“bypasses PowerShell command validation”），
-计划任务不受此限制。
+`restart-dsh.cmd` 和启动器必须使用 Windows 的 CRLF 换行；LF-only 的批处理会被
+`cmd.exe` 错误解析，典型表现是反复提示 `'m' is not recognized`。
+仓库根目录的 `.gitattributes` 已固定这两类文件使用 CRLF。
 
 ### 配置
 
@@ -344,7 +369,7 @@ Start-ScheduledTask -TaskName 'wb-dsh-web'
 ## 开发
 
 ```powershell
-npm test     # 51 个测试：taxonomy / analyzer / followup / report / snapshot / plugin / client / store
+npm test     # 53 个测试：taxonomy / analyzer / followup / report / snapshot / plugin / client / store
 npm run check  # 19 个文件语法检查
 npm run scan -- --limit 5 --html .\reports\preview.html
 ```
@@ -357,8 +382,18 @@ npm run scan -- --limit 5 --html .\reports\preview.html
 
 - [错误分类细则](docs/TAXONOMY.md)
 - [还能怎么分析：从数字走到下一步](docs/ANALYSIS-IDEAS.md)
+- [五分钟快速开始](docs/QUICKSTART.md)
 - [示例面板](docs/dashboard-demo.html)
 - [变更记录](CHANGELOG.md)
+
+## 参与贡献
+
+真实的使用反馈、可复现的 bug、文档修正和小范围 PR 都欢迎。先从
+[`good first issue`](https://github.com/SSHOOTING/dsh-event-fix/labels/good%20first%20issue)
+或 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。
+
+如果它帮你省下了排查时间，一个真实的 star 能让更多 DSH 用户找到它；
+如果你准备修改代码，fork 后提一个聚焦的 PR 比只留一个空 fork 更有价值。
 
 ## License
 
